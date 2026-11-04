@@ -1,306 +1,1729 @@
-import customtkinter as ctk
-from tkinter import filedialog
+"""
+PagFlow · interface gráfica (PyQt6)
+────────────────────────────────────────────────────────────────────────────────
+Camada puramente visual. O fluxo operacional continua em ope.py / funcoes.py e
+é acionado exatamente como antes (executar(pasta, destino, nome, separar, cor,
+cb_status)) — nada de regra de negócio mora neste arquivo.
+
+Dois temas completos:
+  • escuro  → céu noturno azul-marinho com estrelinhas azuis que crescem e
+              diminuem (campo de estrelas animado, pintado à mão em QPainter)
+  • claro   → céu diurno, mesma estrutura, destaque em azul-celeste
+
+A troca de tema preserva geometria, proporções e estados: só os tokens mudam.
+"""
+
+from __future__ import annotations
+
+import math
 import os
+import random
 import threading
-from tkinter import messagebox
+from dataclasses import dataclass
 
-# [gerado] Importações lazy serão feitas diretamente dentro das funções que as usam
-# para acelerar a abertura da interface gráfica
+from PyQt6.QtCore import (
+    QEasingCurve, QElapsedTimer, QEvent, QPoint, QPointF, QPropertyAnimation,
+    QRectF, QSettings, Qt, QTimer, QVariantAnimation, pyqtSignal,
+)
+from PyQt6.QtGui import (
+    QBrush, QColor, QFont, QFontMetrics, QGuiApplication, QIcon, QLinearGradient,
+    QPainter, QPainterPath, QPalette, QPen, QPixmap, QRadialGradient,
+)
+from PyQt6.QtWidgets import (
+    QAbstractButton, QApplication, QButtonGroup, QFileDialog, QFrame,
+    QGraphicsDropShadowEffect, QGraphicsOpacityEffect, QHBoxLayout, QLabel,
+    QLineEdit, QMessageBox, QPushButton, QVBoxLayout, QWidget,
+)
 
-# ── Tema e aparência ──────────────────────────────────────────────────────────
-ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("blue")
-
-# ── Paleta WCAG AA (contraste ≥ 4.5:1 sobre fundos escuros) ──────────────────
-NAVY_BG       = "#0D1B2A"   # fundo principal
-NAVY_SURFACE  = "#112236"   # superfície dos cards
-NAVY_BORDER   = "#1B3A5C"   # bordas / divisores
-ACCENT_BLUE   = "#2D7DD2"   # azul destaque (botões primários)
-ACCENT_HOVER  = "#3A8FE8"   # hover dos botões primários
-TEXT_PRIMARY  = "#E8F0FE"   # texto principal  (contraste ~12:1)
-TEXT_SECONDARY= "#94B4D4"   # texto secundário (contraste ~5:1)
-FIELD_BG      = "#0A1828"   # fundo dos inputs
-SUCCESS_GREEN = "#2ECC71"   # feedback de sucesso (não usado aqui, reservado)
-RADIUS        = 10
+TAU = math.tau
 
 
-class App(ctk.CTk):
-    def __init__(self):
+# ══════════════════════════════════════════════════════════════════════════════
+#  TOKENS DE TEMA
+# ══════════════════════════════════════════════════════════════════════════════
+@dataclass(frozen=True)
+class Theme:
+    key: str
+    label: str
+    # fundo
+    bg_top: str
+    bg_bottom: str
+    glow: str
+    glow_alpha: int
+    # superfícies
+    surface: str
+    surface_alpha: float
+    surface_alt: str
+    border: str
+    border_strong: str
+    # texto
+    text: str
+    text_secondary: str
+    text_muted: str
+    # destaque
+    accent: str
+    accent_hover: str
+    accent_pressed: str
+    on_accent: str
+    accent_soft: str
+    accent_soft_text: str
+    # campos
+    field_bg: str
+    field_focus: str
+    field_border: str
+    placeholder: str
+    # estados da barra de status
+    ok_bg: str
+    ok_fg: str
+    err_bg: str
+    err_fg: str
+    warn_bg: str
+    warn_fg: str
+    info_bg: str
+    info_fg: str
+    # botão primário (gradiente)
+    primary_from: str
+    primary_to: str
+    primary_hover_from: str
+    primary_hover_to: str
+    primary_pressed_from: str
+    primary_pressed_to: str
+    # céu estrelado / sombras
+    stars: bool
+    shadow_alpha: int
+
+
+DARK = Theme(
+    key="dark",
+    label="Escuro",
+    bg_top="#091522",
+    bg_bottom="#11263E",
+    glow="#2D7DD2",
+    glow_alpha=32,
+    surface="#112236",
+    surface_alpha=0.88,
+    surface_alt="#162B44",
+    border="#1B3A5C",
+    border_strong="#2A567F",
+    text="#E8F0FE",
+    text_secondary="#94B4D4",
+    text_muted="#6F8CAB",
+    accent="#2C77C6",
+    accent_hover="#3A89DA",
+    accent_pressed="#22609C",
+    on_accent="#FFFFFF",
+    accent_soft="#16324F",
+    accent_soft_text="#9CC7FF",
+    field_bg="#0A1828",
+    field_focus="#0C1E33",
+    field_border="#1B3A5C",
+    placeholder="#7694B4",
+    ok_bg="#12331F",
+    ok_fg="#7EE2A8",
+    err_bg="#3A1618",
+    err_fg="#FF9E9E",
+    warn_bg="#3A2E12",
+    warn_fg="#FFD479",
+    info_bg="#14273D",
+    info_fg="#B7CFEA",
+    primary_from="#2C77C6",
+    primary_to="#23629F",
+    primary_hover_from="#3585D8",
+    primary_hover_to="#2A6FBA",
+    primary_pressed_from="#23629F",
+    primary_pressed_to="#1D5590",
+    stars=True,
+    shadow_alpha=0,
+)
+
+LIGHT = Theme(
+    key="light",
+    label="Claro",
+    bg_top="#E7F2FD",
+    bg_bottom="#FBFDFF",
+    glow="#FFFFFF",
+    glow_alpha=150,
+    surface="#FFFFFF",
+    surface_alpha=0.96,
+    surface_alt="#F1F8FE",
+    border="#D9E8F6",
+    border_strong="#BED8EC",
+    text="#0B2540",
+    text_secondary="#4B6A87",
+    text_muted="#6F8CA6",
+    accent="#0EA5E9",
+    accent_hover="#38BDF8",
+    accent_pressed="#0284C7",
+    on_accent="#062338",
+    accent_soft="#E0F2FE",
+    accent_soft_text="#0369A1",
+    field_bg="#FFFFFF",
+    field_focus="#FFFFFF",
+    field_border="#D5E5F5",
+    placeholder="#8AA6BF",
+    ok_bg="#E7F8EF",
+    ok_fg="#0E7A44",
+    err_bg="#FDEBEB",
+    err_fg="#B42318",
+    warn_bg="#FFF6E4",
+    warn_fg="#8A5A00",
+    info_bg="#EAF4FD",
+    info_fg="#1F5C8B",
+    primary_from="#38BDF8",
+    primary_to="#0EA5E9",
+    primary_hover_from="#4EC5FA",
+    primary_hover_to="#22A9E8",
+    primary_pressed_from="#0EA5E9",
+    primary_pressed_to="#0284C7",
+    stars=False,
+    shadow_alpha=26,
+)
+
+THEMES = {"dark": DARK, "light": LIGHT}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+def C(hex_color: str, alpha: int | None = None) -> QColor:
+    """QColor a partir de HEX, com alfa opcional (0-255)."""
+    color = QColor(hex_color)
+    if alpha is not None:
+        color.setAlpha(alpha)
+    return color
+
+
+def F(px: int, weight: QFont.Weight = QFont.Weight.Normal,
+      tracking: float = 0.0, family: str = "Segoe UI") -> QFont:
+    """Fonte em pixels — evita o descompasso entre pt e px do QSS."""
+    font = QFont(family)
+    font.setPixelSize(px)
+    font.setWeight(weight)
+    font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+    if tracking:
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, tracking)
+    return font
+
+
+def draw_folder(p: QPainter, rect: QRectF, color: QColor, width: float = 1.4) -> None:
+    x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+    path = QPainterPath()
+    path.moveTo(x + w * 0.04, y + h * 0.16)
+    path.lineTo(x + w * 0.36, y + h * 0.16)
+    path.lineTo(x + w * 0.48, y + h * 0.34)
+    path.lineTo(x + w * 0.96, y + h * 0.34)
+    path.lineTo(x + w * 0.96, y + h * 0.86)
+    path.lineTo(x + w * 0.04, y + h * 0.86)
+    path.closeSubpath()
+    p.setPen(QPen(color, width, Qt.PenStyle.SolidLine,
+                  Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawPath(path)
+
+
+def draw_play(p: QPainter, rect: QRectF, color: QColor) -> None:
+    x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+    path = QPainterPath()
+    path.moveTo(x + w * 0.16, y + h * 0.08)
+    path.lineTo(x + w * 0.92, y + h * 0.50)
+    path.lineTo(x + w * 0.16, y + h * 0.92)
+    path.closeSubpath()
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(color)
+    p.drawPath(path)
+
+
+def draw_chevron(p: QPainter, cx: float, cy: float, size: float, color: QColor,
+                 width: float = 1.5, up: bool = False) -> None:
+    p.setPen(QPen(color, width, Qt.PenStyle.SolidLine,
+                  Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    path = QPainterPath()
+    if up:
+        path.moveTo(cx - size, cy + size * 0.42)
+        path.lineTo(cx, cy - size * 0.42)
+        path.lineTo(cx + size, cy + size * 0.42)
+    else:
+        path.moveTo(cx - size, cy - size * 0.42)
+        path.lineTo(cx, cy + size * 0.42)
+        path.lineTo(cx + size, cy - size * 0.42)
+    p.drawPath(path)
+
+
+def draw_check(p: QPainter, rect: QRectF, color: QColor, width: float = 1.6) -> None:
+    x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+    p.setPen(QPen(color, width, Qt.PenStyle.SolidLine,
+                  Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    path = QPainterPath()
+    path.moveTo(x + w * 0.12, y + h * 0.54)
+    path.lineTo(x + w * 0.40, y + h * 0.80)
+    path.lineTo(x + w * 0.90, y + h * 0.20)
+    p.drawPath(path)
+
+
+def draw_moon(p: QPainter, center: QPointF, radius: float, color: QColor) -> None:
+    outer = QPainterPath()
+    outer.addEllipse(center, radius, radius)
+    cut = QPainterPath()
+    cut.addEllipse(QPointF(center.x() + radius * 0.62, center.y() - radius * 0.52),
+                   radius * 0.94, radius * 0.94)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(color)
+    p.drawPath(outer.subtracted(cut))
+
+
+def draw_sun(p: QPainter, center: QPointF, radius: float, color: QColor) -> None:
+    p.setPen(QPen(color, 1.3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawEllipse(center, radius * 0.52, radius * 0.52)
+    for i in range(8):
+        angle = math.radians(i * 45)
+        dx, dy = math.cos(angle), math.sin(angle)
+        p.drawLine(QPointF(center.x() + dx * radius * 0.84, center.y() + dy * radius * 0.84),
+                   QPointF(center.x() + dx * radius * 1.14, center.y() + dy * radius * 1.14))
+
+
+def draw_sheet(p: QPainter, rect: QRectF, color: QColor, width: float = 1.25) -> None:
+    """Marca do app: mini planilha (cabeçalho + colunas)."""
+    x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+    radius = w * 0.18
+    p.setPen(QPen(color, width, Qt.PenStyle.SolidLine,
+                  Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawRoundedRect(QRectF(x, y, w, h), radius, radius)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(color)
+    p.drawRect(QRectF(x + width, y + width, w - width * 2, h * 0.26))
+    p.setPen(QPen(color, width * 0.9))
+    p.drawLine(QPointF(x + w * 0.5, y + h * 0.34), QPointF(x + w * 0.5, y + h - width))
+
+
+def make_app_icon(theme: Theme) -> QIcon:
+    icon = QIcon()
+    for size in (16, 24, 32, 48, 64, 128, 256):
+        pm = QPixmap(size, size)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        grad = QLinearGradient(0, 0, size, size)
+        grad.setColorAt(0.0, C(theme.primary_from))
+        grad.setColorAt(1.0, C(theme.primary_pressed_to))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(grad))
+        p.drawRoundedRect(QRectF(0.5, 0.5, size - 1, size - 1), size * 0.24, size * 0.24)
+        glyph = size * 0.46
+        draw_sheet(p, QRectF((size - glyph * 0.86) / 2, (size - glyph) / 2,
+                             glyph * 0.86, glyph),
+                   C(theme.on_accent), max(1.0, size * 0.035))
+        p.end()
+        icon.addPixmap(pm)
+    return icon
+
+
+def make_success_pixmap(theme: Theme, size: int = 44) -> QPixmap:
+    """Ícone do diálogo de sucesso, no mesmo vocabulário visual do app."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    fill = C(theme.ok_fg)
+    mark = C("#062338") if theme.key == "dark" else C("#FFFFFF")
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(fill)
+    p.drawEllipse(QRectF(1, 1, size - 2, size - 2))
+    draw_check(p, QRectF(size * 0.28, size * 0.31, size * 0.42, size * 0.38), mark, 2.2)
+    p.end()
+    return pm
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CÉU ESTRELADO
+# ══════════════════════════════════════════════════════════════════════════════
+@dataclass
+class Star:
+    x: float          # posição relativa 0-1
+    y: float
+    radius: float
+    base_alpha: int
+    period: float     # segundos por ciclo de cintilação
+    phase: float
+    color: str
+    halo: bool
+
+
+class StarField(QWidget):
+    """Fundo do app: gradiente + (no tema escuro) estrelas que pulsam."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._theme = DARK
+        self._reduced = os.environ.get("PAGFLOW_REDUCED_MOTION", "") == "1"
+        rng = random.Random(20261104)
+        self._stars = self._make_stars(rng)
+        self._clock = QElapsedTimer()
+        self._clock.start()
+        self._timer = QTimer(self)
+        self._timer.setInterval(40)          # ~25 fps: suficiente p/ cintilar
+        self._timer.timeout.connect(self.update)
+
+    @staticmethod
+    def _make_stars(rng: random.Random) -> list[Star]:
+        palette = ("#6FA8F0", "#8FC2FF", "#5B8FC9", "#A9CCFF", "#4E7FB8")
+        stars: list[Star] = []
+        # poeira fina
+        for _ in range(62):
+            stars.append(Star(
+                x=rng.uniform(0.015, 0.985), y=rng.uniform(0.01, 0.99),
+                radius=rng.uniform(0.8, 1.7),
+                base_alpha=rng.randint(70, 205),
+                period=rng.uniform(2.8, 8.4), phase=rng.random(),
+                color=rng.choice(palette), halo=False,
+            ))
+        # poucas estrelas maiores, com halo suave
+        for _ in range(5):
+            stars.append(Star(
+                x=rng.uniform(0.10, 0.90), y=rng.uniform(0.07, 0.92),
+                radius=rng.uniform(1.5, 2.0),
+                base_alpha=rng.randint(170, 220),
+                period=rng.uniform(4.5, 9.5), phase=rng.random(),
+                color="#9CC7FF", halo=True,
+            ))
+        return stars
+
+    # ── tema ────────────────────────────────────────────────────────────────
+    def set_theme(self, theme: Theme) -> None:
+        self._theme = theme
+        self._sync_timer()
+        self.update()
+
+    def _sync_timer(self) -> None:
+        should_run = self._theme.stars and not self._reduced and self.isVisible()
+        if should_run and not self._timer.isActive():
+            self._timer.start()
+        elif not should_run and self._timer.isActive():
+            self._timer.stop()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._sync_timer()
+
+    def hideEvent(self, event) -> None:
+        super().hideEvent(event)
+        self._sync_timer()
+
+    # ── pintura ─────────────────────────────────────────────────────────────
+    def paintEvent(self, event) -> None:
+        theme = self._theme
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = float(self.width()), float(self.height())
+
+        grad = QLinearGradient(0, 0, 0, h)
+        grad.setColorAt(0.0, C(theme.bg_top))
+        grad.setColorAt(1.0, C(theme.bg_bottom))
+        p.fillRect(QRectF(0, 0, w, h), QBrush(grad))
+
+        if theme.glow_alpha:
+            glow = QColor(theme.glow)
+            glow.setAlpha(theme.glow_alpha)
+            radial = QRadialGradient(QPointF(w * 0.84, h * 0.01), max(w, h) * 0.9)
+            radial.setColorAt(0.0, glow)
+            transparent = QColor(theme.glow)
+            transparent.setAlpha(0)
+            radial.setColorAt(1.0, transparent)
+            p.fillRect(QRectF(0, 0, w, h), QBrush(radial))
+
+        if not theme.stars:
+            return
+
+        now = self._clock.elapsed() / 1000.0
+        p.setPen(Qt.PenStyle.NoPen)
+        for star in self._stars:
+            wave = 0.5 + 0.5 * math.sin(TAU * (now / star.period + star.phase))
+            wave = wave * wave * (3 - 2 * wave)          # smoothstep: sobe/desce macio
+            alpha = int(star.base_alpha * (0.35 + 0.65 * wave))
+            if alpha <= 3:
+                continue
+            radius = star.radius * (0.68 + 0.62 * wave)
+            color = C(star.color, alpha)
+            p.setBrush(color)
+            p.drawEllipse(QPointF(star.x * w, star.y * h), radius, radius)
+            if star.halo:
+                halo = QRadialGradient(QPointF(star.x * w, star.y * h), radius * 4.2)
+                inner = C(star.color, int(alpha * 0.26))
+                halo.setColorAt(0.0, inner)
+                halo.setColorAt(1.0, C(star.color, 0))
+                p.setBrush(QBrush(halo))
+                p.drawEllipse(QPointF(star.x * w, star.y * h), radius * 4.2, radius * 4.2)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  PEÇAS DE SUPERFÍCIE
+# ══════════════════════════════════════════════════════════════════════════════
+class Card(QFrame):
+    """Superfície arredondada, translúcida no escuro para o céu aparecer."""
+
+    def __init__(self, parent: QWidget | None = None, radius: int = 12) -> None:
+        super().__init__(parent)
+        self._theme = DARK
+        self._radius = radius
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+
+    def set_theme(self, theme: Theme) -> None:
+        self._theme = theme
+        self.update()
+
+    def set_shadow(self, alpha: int) -> None:
+        """Sombra macia via efeito gráfico (o desenho manual ficava em faixas)."""
+        if alpha <= 0:
+            self.setGraphicsEffect(None)
+            return
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(28)
+        shadow.setOffset(0, 5)
+        shadow.setColor(QColor(15, 40, 70, alpha))
+        self.setGraphicsEffect(shadow)
+
+    def paintEvent(self, event) -> None:
+        t = self._theme
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+
+        fill = C(t.surface, int(t.surface_alpha * 255))
+        p.setPen(QPen(C(t.border), 1))
+        p.setBrush(fill)
+        p.drawRoundedRect(rect, self._radius, self._radius)
+
+
+class Divider(QWidget):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._theme = DARK
+        self.setFixedHeight(1)
+
+    def set_theme(self, theme: Theme) -> None:
+        self._theme = theme
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        p = QPainter(self)
+        grad = QLinearGradient(0, 0, self.width(), 0)
+        grad.setColorAt(0.0, C(self._theme.border, 0))
+        grad.setColorAt(0.18, C(self._theme.border))
+        grad.setColorAt(0.82, C(self._theme.border))
+        grad.setColorAt(1.0, C(self._theme.border, 0))
+        p.fillRect(self.rect(), QBrush(grad))
+
+
+class LogoMark(QWidget):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._theme = DARK
+        self.setFixedSize(30, 30)
+
+    def set_theme(self, theme: Theme) -> None:
+        self._theme = theme
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        t = self._theme
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
+
+        grad = QLinearGradient(0, 0, self.width(), self.height())
+        grad.setColorAt(0.0, C(t.primary_from))
+        grad.setColorAt(1.0, C(t.accent_pressed))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(grad))
+        p.drawRoundedRect(rect, 9, 9)
+
+        # brilho superior sutil
+        sheen = QLinearGradient(0, 0, 0, self.height())
+        sheen.setColorAt(0.0, C("#FFFFFF", 40))
+        sheen.setColorAt(0.55, C("#FFFFFF", 0))
+        p.setBrush(QBrush(sheen))
+        p.drawRoundedRect(rect, 9, 9)
+
+        draw_sheet(p, QRectF(8, 7.5, 14, 15), C(t.on_accent), 1.3)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  BOTÕES
+# ══════════════════════════════════════════════════════════════════════════════
+class PillButton(QAbstractButton):
+    """Botão primário (gradiente) / secundário (superfície + borda)."""
+
+    def __init__(self, text: str, variant: str = "secondary", glyph: str | None = None,
+                 width: int | None = None, height: int = 36,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._theme = DARK
+        self.variant = variant
+        self.glyph = glyph
+        self._hover = False
+        self.setText(text)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName(text)
+        if width:
+            self.setFixedWidth(width)
+        self.setFixedHeight(height)
+
+    def set_theme(self, theme: Theme) -> None:
+        self._theme = theme
+        self.update()
+
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def focusInEvent(self, event) -> None:
+        self.update()
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event) -> None:
+        self.update()
+        super().focusOutEvent(event)
+
+    def paintEvent(self, event) -> None:
+        t = self._theme
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        radius = 10
+        enabled = self.isEnabled()
+
+        if self.variant == "primary":
+            if not enabled:
+                top, bottom = C(t.border_strong), C(t.border)
+            elif self.isDown():
+                top, bottom = C(t.primary_pressed_from), C(t.primary_pressed_to)
+            elif self._hover:
+                top, bottom = C(t.primary_hover_from), C(t.primary_hover_to)
+            else:
+                top, bottom = C(t.primary_from), C(t.primary_to)
+            grad = QLinearGradient(0, rect.top(), 0, rect.bottom())
+            grad.setColorAt(0.0, top)
+            grad.setColorAt(1.0, bottom)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(grad))
+            p.drawRoundedRect(rect, radius, radius)
+
+            sheen = QLinearGradient(0, rect.top(), 0, rect.bottom())
+            sheen.setColorAt(0.0, C("#FFFFFF", 46 if enabled else 14))
+            sheen.setColorAt(0.6, C("#FFFFFF", 0))
+            p.setBrush(QBrush(sheen))
+            p.drawRoundedRect(rect, radius, radius)
+
+            fg = C(t.on_accent, 255 if enabled else 120)
+        else:
+            if not enabled:
+                fill, stroke, fg = C(t.surface_alt), C(t.border), C(t.text_muted, 140)
+            else:
+                fill = C(t.surface_alt if self._hover else t.surface, 235)
+                stroke = C(t.accent if self._hover else t.border)
+                fg = C(t.text if self._hover else t.text_secondary)
+            p.setPen(QPen(stroke, 1))
+            p.setBrush(fill)
+            p.drawRoundedRect(rect, radius, radius)
+
+        if self.hasFocus():
+            ring = C(t.on_accent if self.variant == "primary" else t.accent)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(ring, 1.5))
+            p.drawRoundedRect(rect.adjusted(2.2, 2.2, -2.2, -2.2), radius - 2, radius - 2)
+
+        font = F(12, QFont.Weight.DemiBold if self.variant == "primary" else QFont.Weight.Medium)
+        p.setFont(font)
+        fm = QFontMetrics(font)
+        text = self.text()
+        text_w = fm.horizontalAdvance(text)
+        icon_w = 11 if self.glyph else 0
+        gap = 8 if self.glyph else 0
+        total = icon_w + gap + text_w
+        x = (self.width() - total) / 2
+
+        if self.glyph:
+            icon_rect = QRectF(x, (self.height() - 12) / 2, 11, 12)
+            if self.glyph == "play":
+                draw_play(p, icon_rect, fg)
+            x += icon_w + gap
+
+        p.setPen(fg)
+        p.drawText(QRectF(x, 0, text_w + 2, self.height()),
+                   int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), text)
+
+
+class IconButton(QAbstractButton):
+    """Botão de ícone (selecionar pasta)."""
+
+    def __init__(self, glyph: str, tooltip: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._theme = DARK
+        self.glyph = glyph
+        self._hover = False
+        self.setFixedSize(36, 32)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setToolTip(tooltip)
+        self.setAccessibleName(tooltip)
+
+    def set_theme(self, theme: Theme) -> None:
+        self._theme = theme
+        self.update()
+
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def focusInEvent(self, event) -> None:
+        self.update()
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event) -> None:
+        self.update()
+        super().focusOutEvent(event)
+
+    def paintEvent(self, event) -> None:
+        t = self._theme
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+
+        if self.isDown():
+            fill, stroke = C(t.surface_alt), C(t.accent)
+        elif self._hover:
+            fill, stroke = C(t.surface_alt), C(t.accent)
+        else:
+            fill, stroke = C(t.surface, 235), C(t.border)
+        p.setPen(QPen(stroke, 1))
+        p.setBrush(fill)
+        p.drawRoundedRect(rect, 10, 10)
+
+        if self.hasFocus():
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(C(t.accent), 1.5))
+            p.drawRoundedRect(rect.adjusted(2.2, 2.2, -2.2, -2.2), 8, 8)
+
+        color = C(t.accent if self._hover else t.text_secondary)
+        draw_folder(p, QRectF(11, 9.5, 14, 13), color, 1.4)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  ALTERNADOR DE TEMA
+# ══════════════════════════════════════════════════════════════════════════════
+class ThemeToggle(QAbstractButton):
+    """Pílula com lua/sol e botão deslizante — alterna escuro ↔ claro."""
+
+    theme_requested = pyqtSignal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._theme = DARK
+        self._pos = 0.0            # 0 = escuro, 1 = claro
+        self._hover = False
+        self._pending: str | None = None
+        self.setFixedSize(58, 26)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setToolTip("Alternar entre tema escuro e claro")
+        self.setAccessibleName("Alternar tema")
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(190)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim)
+
+    def set_theme(self, theme: Theme) -> None:
+        self._theme = theme
+        target = 1.0 if theme.key == "light" else 0.0
+        if not self.isVisible() or self._pos == target:
+            self._pos = target
+            self.update()
+            return
+        self._anim.stop()
+        self._anim.setStartValue(float(self._pos))
+        self._anim.setEndValue(target)
+        self._anim.start()
+
+    def _on_anim(self, value) -> None:
+        self._pos = float(value)
+        self.update()
+
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def focusInEvent(self, event) -> None:
+        self.update()
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event) -> None:
+        self.update()
+        super().focusOutEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._pending = "dark" if event.position().x() < self.width() / 2 else "light"
+            self.update()
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self._pending:
+            inside = self.rect().contains(event.position().toPoint())
+            target = self._pending
+            self._pending = None
+            if inside and target != self._theme.key:
+                self.theme_requested.emit(target)
+        self.update()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.theme_requested.emit("light" if self._theme.key == "dark" else "dark")
+            return
+        super().keyPressEvent(event)
+
+    def paintEvent(self, event) -> None:
+        t = self._theme
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        track = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
+        p.setPen(QPen(C(t.accent if self._hover else t.border), 1))
+        p.setBrush(C(t.surface_alt, 220))
+        p.drawRoundedRect(track, track.height() / 2, track.height() / 2)
+
+        # botão deslizante
+        knob = 22.0
+        x = 2 + self._pos * (self.width() - knob - 4)
+        knob_rect = QRectF(x, 2, knob, knob)
+        grad = QLinearGradient(0, knob_rect.top(), 0, knob_rect.bottom())
+        grad.setColorAt(0.0, C(t.accent_hover))
+        grad.setColorAt(1.0, C(t.accent))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(grad))
+        p.drawEllipse(knob_rect)
+
+        # ícones
+        moon_color = C(t.on_accent) if self._pos < 0.5 else C(t.text_muted)
+        sun_color = C(t.on_accent) if self._pos >= 0.5 else C(t.text_muted)
+        draw_moon(p, QPointF(x + knob / 2 + 0.6, self.height() / 2), 5.4, moon_color)
+        draw_sun(p, QPointF(2 + (self.width() - 4) - knob / 2 - 0.6, self.height() / 2),
+                 5.0, sun_color)
+
+        if self.hasFocus():
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(C(t.accent), 1.5))
+            p.drawRoundedRect(track.adjusted(-1, -1, 1, 1), track.height() / 2 + 1,
+                              track.height() / 2 + 1)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CONTROLE SEGMENTADO
+# ══════════════════════════════════════════════════════════════════════════════
+class SegmentedControl(QWidget):
+    def __init__(self, options: list[str], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._theme = DARK
+        self._hover_index = -1
+        self._pos = 0.0
+        self.setFixedHeight(32)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        self._buttons: list[QPushButton] = []
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(0)
+        for index, option in enumerate(options):
+            button = QPushButton(option, self)
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            button.setFlat(True)
+            button.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+            button.installEventFilter(self)
+            self._group.addButton(button, index)
+            layout.addWidget(button, 1)
+            self._buttons.append(button)
+        self._buttons[-1].setChecked(True)
+
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(170)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim)
+        self._group.buttonClicked.connect(self._on_clicked)
+
+    # ── API ─────────────────────────────────────────────────────────────────
+    def value(self) -> str:
+        button = self._group.checkedButton()
+        return button.text() if button else ""
+
+    def set_value(self, text: str) -> None:
+        for button in self._buttons:
+            if button.text() == text:
+                button.setChecked(True)
+                self._sync_buttons()
+                self._snap_pill()
+                break
+
+    def _snap_pill(self) -> None:
+        checked = self._group.checkedButton()
+        self._pos = float(self._buttons.index(checked)) if checked in self._buttons else 0.0
+        self.update()
+
+    def _on_clicked(self, button: QPushButton) -> None:
+        index = self._buttons.index(button)
+        self._sync_buttons()          # texto do item ativo acompanha a seleção
+        self._anim.stop()
+        self._anim.setStartValue(float(self._pos))
+        self._anim.setEndValue(float(index))
+        self._anim.start()
+
+    def _on_anim(self, value) -> None:
+        self._pos = float(value)
+        self.update()
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj in self._buttons:
+            if event.type() == QEvent.Type.Enter:
+                self._hover_index = self._buttons.index(obj)
+                self.update()
+            elif event.type() == QEvent.Type.Leave:
+                if self._hover_index == self._buttons.index(obj):
+                    self._hover_index = -1
+                    self.update()
+            elif event.type() in (QEvent.Type.FocusIn, QEvent.Type.FocusOut):
+                self.update()
+        return super().eventFilter(obj, event)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._snap_pill()
+
+    # ── tema ────────────────────────────────────────────────────────────────
+    def set_theme(self, theme: Theme) -> None:
+        self._theme = theme
+        self._sync_buttons()
+        self.update()
+
+    def _sync_buttons(self) -> None:
+        t = self._theme
+        for button in self._buttons:
+            checked = button.isChecked()
+            color = t.on_accent if checked else t.text_secondary
+            weight = QFont.Weight.DemiBold if checked else QFont.Weight.Normal
+            button.setFont(F(11, weight))
+            button.setStyleSheet(
+                "QPushButton { background: transparent; border: none;"
+                f" color: {color}; padding: 0px; }}"
+                "QPushButton:focus { outline: none; }"
+            )
+
+    def _segment_rect(self, index: int) -> QRectF:
+        count = max(1, len(self._buttons))
+        width = (self.width() - 4) / count
+        return QRectF(2 + index * width, 2, width, self.height() - 4)
+
+    def paintEvent(self, event) -> None:
+        t = self._theme
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        track = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
+        p.setPen(QPen(C(t.field_border), 1))
+        p.setBrush(C(t.field_bg))
+        p.drawRoundedRect(track, 9, 9)
+
+        if self._hover_index >= 0 and not self._buttons[self._hover_index].isChecked():
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(C(t.accent, 26))
+            p.drawRoundedRect(self._segment_rect(self._hover_index).adjusted(2, 1, -2, -1),
+                              7, 7)
+
+        # pílula do item selecionado (desliza entre as opções)
+        count = max(1, len(self._buttons))
+        seg_w = (self.width() - 4) / count
+        x = 2 + self._pos * seg_w
+        pill = QRectF(x + 1, 2, seg_w - 2, self.height() - 4)
+        grad = QLinearGradient(0, pill.top(), 0, pill.bottom())
+        grad.setColorAt(0.0, C(t.primary_from))
+        grad.setColorAt(1.0, C(t.primary_to))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(grad))
+        p.drawRoundedRect(pill, 7, 7)
+
+        # anel de foco no item focado
+        focused = next((b for b in self._buttons if b.hasFocus()), None)
+        if focused is not None:
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(C(t.accent_soft_text if focused.isChecked() else t.accent), 1.4))
+            p.drawRoundedRect(self._segment_rect(self._buttons.index(focused)).adjusted(2, 1, -2, -1),
+                              7, 7)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._snap_pill()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.EnabledChange:
+            self._sync_buttons()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CAMPO DE SELEÇÃO (substitui o option menu)
+# ══════════════════════════════════════════════════════════════════════════════
+class OptionPopup(QWidget):
+    chosen = pyqtSignal(str)
+
+    def __init__(self, options: list[str], current: str, theme: Theme,
+                 parent: QWidget) -> None:
+        super().__init__(parent, Qt.WindowType.Popup
+                         | Qt.WindowType.FramelessWindowHint
+                         | Qt.WindowType.NoDropShadowWindowHint)
+        self._theme = theme
+        self._options = options
+        self._current = current
+        self._hover = max(0, options.index(current)) if current in options else 0
+        self._row_h = 30
+        self._inset = 6
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setFixedSize(parent.width() + self._inset * 2,
+                          len(options) * self._row_h + 8 + self._inset * 2)
+
+    def fade_in(self) -> None:
+        self.setWindowOpacity(0.0)
+        anim = QPropertyAnimation(self, b"windowOpacity", self)
+        anim.setDuration(120)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.start()
+        self._fade = anim
+
+    def _panel(self) -> QRectF:
+        return QRectF(self._inset, self._inset,
+                      self.width() - self._inset * 2,
+                      self.height() - self._inset * 2)
+
+    def _row_rect(self, index: int) -> QRectF:
+        panel = self._panel()
+        return QRectF(panel.left() + 4, panel.top() + 4 + index * self._row_h,
+                      panel.width() - 8, self._row_h)
+
+    def paintEvent(self, event) -> None:
+        t = self._theme
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        panel = self._panel()
+
+        shadow = QColor(6, 18, 32, 70 if t.key == "dark" else 30)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(shadow)
+        p.drawRoundedRect(panel.adjusted(0, 2, 0, 4), 11, 11)
+
+        p.setPen(QPen(C(t.border), 1))
+        p.setBrush(C(t.surface_alt, 252))
+        p.drawRoundedRect(panel, 10, 10)
+
+        p.setFont(F(11))
+        for index, option in enumerate(self._options):
+            row = self._row_rect(index)
+            if index == self._hover:
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(C(t.accent, 30))
+                p.drawRoundedRect(row, 7, 7)
+            if option == self._current:
+                p.setPen(QPen(C(t.accent), 1.4, Qt.PenStyle.SolidLine,
+                              Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawRoundedRect(row.adjusted(0.7, 0.7, -0.7, -0.7), 7, 7)
+                draw_check(p, QRectF(row.right() - 22, row.center().y() - 6, 11, 12),
+                           C(t.accent_soft_text if t.key == "light" else t.accent), 1.5)
+            p.setPen(C(t.text if index == self._hover else t.text_secondary))
+            p.drawText(row.adjusted(12, 0, -26, 0),
+                       int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), option)
+
+    def _index_at(self, y: float) -> int:
+        panel = self._panel()
+        if y < panel.top() + 4:
+            return 0
+        index = int((y - panel.top() - 4) // self._row_h)
+        return max(0, min(len(self._options) - 1, index))
+
+    def mouseMoveEvent(self, event) -> None:
+        index = self._index_at(event.position().y())
+        if index != self._hover:
+            self._hover = index
+            self.update()
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._choose(self._hover)
+
+    def _choose(self, index: int) -> None:
+        self.chosen.emit(self._options[index])
+        self.close()
+        self.deleteLater()
+
+    def keyPressEvent(self, event) -> None:
+        key = event.key()
+        if key == Qt.Key.Key_Down:
+            self._hover = min(len(self._options) - 1, self._hover + 1)
+            self.update()
+        elif key == Qt.Key.Key_Up:
+            self._hover = max(0, self._hover - 1)
+            self.update()
+        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self._choose(self._hover)
+        elif key == Qt.Key.Key_Escape:
+            self.close()
+            self.deleteLater()
+        else:
+            super().keyPressEvent(event)
+
+
+class SelectField(QAbstractButton):
+    """Campo que abre o popup de opções (cor da tabela)."""
+
+    def __init__(self, options: list[str], value: str,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._theme = DARK
+        self._options = options
+        self._value = value
+        self._hover = False
+        self._popup: OptionPopup | None = None
+        self.setFixedHeight(32)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName("Cor do relatório")
+
+    def set_theme(self, theme: Theme) -> None:
+        self._theme = theme
+        self.update()
+
+    def value(self) -> str:
+        return self._value
+
+    def set_value(self, value: str) -> None:
+        self._value = value
+        self.update()
+
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def focusInEvent(self, event) -> None:
+        self.update()
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event) -> None:
+        self.update()
+        super().focusOutEvent(event)
+
+    def paintEvent(self, event) -> None:
+        t = self._theme
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        active = self._hover or self.hasFocus() or self._popup is not None
+        p.setPen(QPen(C(t.accent if active else t.field_border), 1))
+        p.setBrush(C(t.field_focus if active else t.field_bg))
+        p.drawRoundedRect(rect, 10, 10)
+
+        font = F(11)
+        p.setFont(font)
+        fm = QFontMetrics(font)
+        text = fm.elidedText(self._value, Qt.TextElideMode.ElideRight,
+                             int(self.width() - 44))
+        p.setPen(C(t.text))
+        p.drawText(QRectF(11, 0, self.width() - 42, self.height()),
+                   int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), text)
+        draw_chevron(p, self.width() - 17, self.height() / 2, 4.2,
+                     C(t.accent if active else t.text_secondary), 1.5)
+
+    def _open_popup(self) -> None:
+        if self._popup is not None:
+            return
+        popup = OptionPopup(self._options, self._value, self._theme, self)
+        popup.chosen.connect(self._on_chosen)
+        popup.destroyed.connect(self._on_popup_destroyed)
+        self._popup = popup
+
+        anchor = self.mapToGlobal(QPoint(-6, self.height() - 4))
+        screen = self.screen().availableGeometry() if self.screen() else None
+        if screen and anchor.y() + popup.height() > screen.bottom() - 4:
+            anchor.setY(self.mapToGlobal(QPoint(0, 0)).y() - popup.height() + 4)
+        popup.move(anchor)
+        popup.show()
+        popup.setFocus()
+        popup.fade_in()
+        self.update()
+
+    def _on_popup_destroyed(self) -> None:
+        self._popup = None
+        self.update()
+
+    def _on_chosen(self, value: str) -> None:
+        self._value = value
+        self.update()
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self._popup is None:
+            self._open_popup()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Down, Qt.Key.Key_Space, Qt.Key.Key_Return,
+                           Qt.Key.Key_Enter):
+            self._open_popup()
+            return
+        super().keyPressEvent(event)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  BARRA DE STATUS
+# ══════════════════════════════════════════════════════════════════════════════
+class StatusBar(QWidget):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._theme = DARK
+        self._message = "Pronto para uso."
+        self._state = "idle"
+        self._busy = False
+        self._angle = 0
+        self.setFixedHeight(36)
+        self.setFont(F(11))
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._spin)
+
+    def set_theme(self, theme: Theme) -> None:
+        self._theme = theme
+        self.update()
+
+    def set_message(self, message: str, state: str = "idle") -> None:
+        self._message = message
+        self._state = state
+        self.update()
+
+    def set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        if busy and not self._timer.isActive():
+            self._timer.start()
+        elif not busy and self._timer.isActive():
+            self._timer.stop()
+        self.update()
+
+    def _spin(self) -> None:
+        self._angle = (self._angle + 7) % 360
+        self.update()
+
+    def _colors(self) -> tuple[QColor, QColor, bool]:
+        t = self._theme
+        if self._state == "ok":
+            return C(t.ok_bg), C(t.ok_fg), False
+        if self._state == "erro":
+            return C(t.err_bg), C(t.err_fg), False
+        if self._state == "aviso":
+            return C(t.warn_bg), C(t.warn_fg), False
+        return C(t.surface_alt, 190), C(t.text_secondary), True
+
+    def paintEvent(self, event) -> None:
+        t = self._theme
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        bg, fg, bordered = self._colors()
+
+        p.setPen(QPen(C(t.border), 1) if bordered else Qt.PenStyle.NoPen)
+        p.setBrush(bg)
+        p.drawRoundedRect(rect, 10, 10)
+
+        cy = self.height() / 2
+        dot_color = fg if not bordered else C(t.accent)
+        halo = QColor(dot_color)
+        halo.setAlpha(30)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(halo)
+        p.drawEllipse(QPointF(14, cy), 5.6, 5.6)
+        p.setBrush(dot_color)
+        p.drawEllipse(QPointF(14, cy), 3.1, 3.1)
+
+        font = F(11)
+        p.setFont(font)
+        fm = QFontMetrics(font)
+        right_pad = 34 if self._busy else 14
+        available = int(self.width() - 26 - right_pad)
+        text = fm.elidedText(self._message, Qt.TextElideMode.ElideRight, max(20, available))
+        p.setPen(fg)
+        p.drawText(QRectF(26, 0, max(20, available), self.height()),
+                   int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), text)
+
+        if self._busy:
+            spinner = QRectF(self.width() - 24, cy - 6, 12, 12)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(C(t.accent), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.drawArc(spinner, int(-self._angle * 16), int(280 * 16))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  FOLHA DE ESTILO
+# ══════════════════════════════════════════════════════════════════════════════
+def build_qss(t: Theme) -> str:
+    return f"""
+QWidget {{
+    font-family: "Segoe UI";
+    color: {t.text};
+}}
+QLabel {{ background: transparent; }}
+QLabel#Meta {{
+    color: {t.text_muted};
+    font-size: 9px;
+    font-weight: 600;
+}}
+QLabel#BrandTitle {{
+    color: {t.text};
+    font-size: 16px;
+    font-weight: 600;
+}}
+QLabel#BrandSub {{
+    color: {t.text_secondary};
+    font-size: 9px;
+}}
+QLabel#Badge {{
+    background: {t.accent_soft};
+    color: {t.accent_soft_text};
+    border-radius: 6px;
+    padding: 3px 9px;
+    font-size: 9px;
+    font-weight: 600;
+}}
+QLabel#Chip {{
+    background: {t.accent};
+    color: {t.on_accent};
+    border-radius: 10px;
+    font-size: 9px;
+    font-weight: 700;
+}}
+QLabel#SectionTitle {{
+    color: {t.text};
+    font-size: 11px;
+    font-weight: 600;
+}}
+QLineEdit#Field {{
+    background: {t.field_bg};
+    border: 1px solid {t.field_border};
+    border-radius: 10px;
+    padding: 0px 11px;
+    color: {t.text};
+    selection-background-color: {t.accent};
+    selection-color: {t.on_accent};
+    font-size: 11px;
+}}
+QLineEdit#Field:hover {{ border-color: {t.border_strong}; }}
+QLineEdit#Field:focus {{ border-color: {t.accent}; background: {t.field_focus}; }}
+QToolTip {{
+    background: {t.surface_alt};
+    color: {t.text};
+    border: 1px solid {t.border};
+    padding: 5px 8px;
+    font-size: 10px;
+}}
+QMessageBox {{ background: {t.surface_alt}; }}
+QMessageBox QLabel {{ color: {t.text}; font-size: 11px; }}
+QMessageBox QPushButton {{
+    background: {t.accent};
+    color: {t.on_accent};
+    border: none;
+    border-radius: 8px;
+    padding: 6px 20px;
+    min-width: 64px;
+    font-size: 11px;
+    font-weight: 600;
+}}
+QMessageBox QPushButton:hover {{ background: {t.accent_hover}; }}
+"""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  APP
+# ══════════════════════════════════════════════════════════════════════════════
+class App(StarField):
+    status_requested = pyqtSignal(str, object)   # (mensagem, estado)
+    thread_finished = pyqtSignal()
+
+    def __init__(self) -> None:
         super().__init__()
+        self.setWindowTitle("PagFlow Excel")
+        self.setFixedSize(500, 610)
+        self.setWindowIcon(make_app_icon(DARK))
 
-        # ── Janela ────────────────────────────────────────────────────────────
-        self.title("PagFlow Excel")
-        self.resizable(False, False)
-        self.configure(fg_color=NAVY_BG)
+        self._settings = QSettings("PagFlow", "PagFlow")
+        saved = str(self._settings.value("tema", "dark"))
+        self._theme_key = saved if saved in THEMES else "dark"
+        self.theme = THEMES[self._theme_key]
+        self._busy = False
+        self._themed: list = []
+        self._overlay: QLabel | None = None
+        self._fade_anim: QPropertyAnimation | None = None
 
-        # Centralizar na tela
-        self.update_idletasks()
-        w, h = 500, 610  # [compacto] Reduzido para caber em telas menores
-        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        self.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
+        self._build()
+        self.status_requested.connect(self._set_status)
+        self.thread_finished.connect(self._on_finished)
+        self._apply_theme()
+        self._center()
+        self.entry_nome.setFocus()      # digitação imediata ao abrir
 
-        self._build_ui()
+    # ── layout ──────────────────────────────────────────────────────────────
+    def _build(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 14, 20, 14)
+        root.setSpacing(0)
 
-    # ── Construção da UI ──────────────────────────────────────────────────────
-    def _build_ui(self):
-        # Padding externo — [compacto] reduzido de 28/24 para 20/14
-        outer = ctk.CTkFrame(self, fg_color=NAVY_BG)
-        outer.pack(fill="both", expand=True, padx=20, pady=14)
+        # ── faixa superior: crédito + alternador de tema ────────────────────
+        top = QWidget(self)
+        top.setFixedHeight(26)
+        top_layout = QHBoxLayout(top)
+        top_layout.setContentsMargins(2, 0, 0, 0)
+        top_layout.setSpacing(0)
 
-        # ── Cabeçalho ─────────────────────────────────────────────────────────
-        header = ctk.CTkFrame(outer, fg_color=NAVY_SURFACE,
-                              corner_radius=RADIUS, border_width=1,
-                              border_color=NAVY_BORDER, height=38)  # [compacto] 45 → 38
-        header.pack(fill="x", pady=(0, 12))  # [compacto] 18 → 12
-        header.pack_propagate(False)
+        self.lbl_author = QLabel("FEITO POR GUSTAVO PINHEIRO", top)
+        self.lbl_author.setObjectName("Meta")
+        self.lbl_author.setFont(F(9, QFont.Weight.DemiBold, 1.1))
+        top_layout.addWidget(self.lbl_author, 0, Qt.AlignmentFlag.AlignVCenter)
+        top_layout.addStretch(1)
 
-        ctk.CTkLabel(
-            header,
-            text="PagFlow",
-            font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold"),  # [compacto] 18 → 16
-            text_color=TEXT_PRIMARY,
-        ).place(relx=0.5, rely=0.5, anchor="center")
+        self.toggle = ThemeToggle(top)
+        self.toggle.theme_requested.connect(self._set_theme)
+        top_layout.addWidget(self.toggle, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        ctk.CTkLabel(
-            header,
-            text="Feito por Gustavo Pinheiro",
-            font=ctk.CTkFont(family="Segoe UI", size=10),  # [compacto] 11 → 10
-            text_color=TEXT_SECONDARY,
-        ).pack(side="right", padx=12, pady=10)  # [compacto] padx 16 → 12
+        root.addWidget(top)
+        root.addSpacing(10)
 
-        # ── Campo 1 — Nome do arquivo ─────────────────────────────────────────
-        self._section_label(outer, "1", "Nome do arquivo de saída")
+        # ── cartão de marca ─────────────────────────────────────────────────
+        self.header = Card(self, radius=12)
+        self.header.setFixedHeight(54)
+        header_layout = QHBoxLayout(self.header)
+        header_layout.setContentsMargins(14, 0, 14, 0)
+        header_layout.setSpacing(11)
 
-        self.entry_nome = self._styled_entry(
-            outer, placeholder="ex.: relatorio_outubro"
-        )
+        self.logo = LogoMark(self.header)
+        header_layout.addWidget(self.logo, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        # ── Campo 2 — Pasta de origem ─────────────────────────────────────────
-        self._section_label(outer, "2", "Pasta com os arquivos de entrada")
+        brand = QVBoxLayout()
+        brand.setContentsMargins(0, 0, 0, 0)
+        brand.setSpacing(1)
+        self.lbl_title = QLabel("PagFlow", self.header)
+        self.lbl_title.setObjectName("BrandTitle")
+        self.lbl_sub = QLabel("Consolidação de pagamentos SAP", self.header)
+        self.lbl_sub.setObjectName("BrandSub")
+        brand.addWidget(self.lbl_title)
+        brand.addWidget(self.lbl_sub)
+        header_layout.addLayout(brand)
+        header_layout.addStretch(1)
 
-        row2 = ctk.CTkFrame(outer, fg_color="transparent")
-        row2.pack(fill="x", pady=(0, 10))  # [compacto] 14 → 10
+        self.lbl_badge = QLabel("XLS → XLSX", self.header)
+        self.lbl_badge.setObjectName("Badge")
+        header_layout.addWidget(self.lbl_badge, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        self.entry_pasta = self._styled_entry(
-            row2, placeholder="Selecione a pasta...", pack=False
-        )
-        self.entry_pasta.pack(side="left", fill="x", expand=True)
+        root.addWidget(self.header)
+        root.addSpacing(20)
 
-        self._browse_btn(row2, self._browse_pasta).pack(side="left", padx=(6, 0))
+        # ── 1 · nome do arquivo ─────────────────────────────────────────────
+        self._section(root, "1", "Nome do arquivo de saída")
+        self.entry_nome = self._entry("ex.: relatorio_outubro")
+        root.addWidget(self.entry_nome)
+        root.addSpacing(18)
 
-        # ── Campo 3 — Separação ───────────────────────────────────────────────
-        self._section_label(outer, "3", "Separação das abas")
+        # ── 2 · pasta de origem ─────────────────────────────────────────────
+        self._section(root, "2", "Pasta com os arquivos de entrada")
+        row_origem = QWidget(self)
+        origem_layout = QHBoxLayout(row_origem)
+        origem_layout.setContentsMargins(0, 0, 0, 0)
+        origem_layout.setSpacing(8)
+        self.entry_pasta = self._entry("Selecione a pasta...")
+        self.btn_pasta = IconButton("folder", "Selecionar pasta de entrada", row_origem)
+        self.btn_pasta.clicked.connect(self._browse_pasta)
+        origem_layout.addWidget(self.entry_pasta, 1)
+        origem_layout.addWidget(self.btn_pasta, 0)
+        root.addWidget(row_origem)
+        root.addSpacing(18)
 
-        seg_frame = ctk.CTkFrame(outer, fg_color="transparent")
-        seg_frame.pack(fill="x", pady=(0, 10))  # [compacto] 14 → 10
+        # ── 3 · separação das abas ──────────────────────────────────────────
+        self._section(root, "3", "Separação das abas")
+        self.seg = SegmentedControl(["Marca", "LNeg", "Fornecedor", "Não Separar"], self)
+        root.addWidget(self.seg)
+        root.addSpacing(18)
 
-        self.sep_var = ctk.StringVar(value="Não Separar")
-        opcoes = ["Marca", "LNeg", "Fornecedor", "Não Separar"]
-        self.seg = ctk.CTkSegmentedButton(
-            seg_frame,
-            values=opcoes,
-            variable=self.sep_var,
-            fg_color=NAVY_SURFACE,
-            selected_color=ACCENT_BLUE,
-            selected_hover_color=ACCENT_HOVER,
-            unselected_color=NAVY_SURFACE,
-            unselected_hover_color=NAVY_BORDER,
-            text_color=TEXT_PRIMARY,
-            text_color_disabled=TEXT_SECONDARY,
-            font=ctk.CTkFont(family="Segoe UI", size=11),  # [compacto] 12 → 11
-            corner_radius=8,
-            border_width=1,
-        )
-        self.seg.pack(fill="x")
+        # ── 4 · personalização ──────────────────────────────────────────────
+        self._section(root, "4", "Personalização")
+        self.select = SelectField(["Verde", "Azul", "Roxo", "Vermelho"], "Azul", self)
+        root.addWidget(self.select)
+        root.addSpacing(18)
 
-        # ── Campo 4 — Personalização (cor da tabela) ──────────────────────────
-        self._section_label(outer, "4", "Personalização")
+        # ── 5 · destino ─────────────────────────────────────────────────────
+        self._section(root, "5", "Destino do arquivo final")
+        row_destino = QWidget(self)
+        destino_layout = QHBoxLayout(row_destino)
+        destino_layout.setContentsMargins(0, 0, 0, 0)
+        destino_layout.setSpacing(8)
+        self.entry_destino = self._entry("Selecione onde salvar...")
+        self.btn_destino = IconButton("folder", "Selecionar pasta de destino", row_destino)
+        self.btn_destino.clicked.connect(self._browse_destino)
+        destino_layout.addWidget(self.entry_destino, 1)
+        destino_layout.addWidget(self.btn_destino, 0)
+        root.addWidget(row_destino)
 
-        self.cor_var = ctk.StringVar(value="Azul")
-        opcoes_cor = ["Verde", "Azul", "Roxo", "Vermelho"]
-        self.opt_cor = ctk.CTkOptionMenu(
-            outer,
-            values=opcoes_cor,
-            variable=self.cor_var,
-            fg_color=NAVY_SURFACE,
-            button_color=ACCENT_BLUE,
-            button_hover_color=ACCENT_HOVER,
-            dropdown_fg_color=NAVY_SURFACE,
-            dropdown_hover_color=NAVY_BORDER,
-            dropdown_text_color=TEXT_PRIMARY,
-            text_color=TEXT_PRIMARY,
-            font=ctk.CTkFont(family="Segoe UI", size=11),  # [compacto] 12 → 11
-            corner_radius=RADIUS,
-            height=32,  # [compacto] 38 → 32
-        )
-        self.opt_cor.pack(fill="x", pady=(0, 10))  # [compacto] 14 → 10
+        root.addStretch(1)
 
-        # ── Campo 5 — Pasta de destino ────────────────────────────────────────
-        self._section_label(outer, "5", "Destino do arquivo final")
+        # ── ações ───────────────────────────────────────────────────────────
+        self.divider = Divider(self)
+        root.addWidget(self.divider)
+        root.addSpacing(12)
 
-        row4 = ctk.CTkFrame(outer, fg_color="transparent")
-        row4.pack(fill="x", pady=(0, 12))  # [compacto] 18 → 12
+        row_actions = QWidget(self)
+        actions_layout = QHBoxLayout(row_actions)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(8)
 
-        self.entry_destino = self._styled_entry(
-            row4, placeholder="Selecione onde salvar...", pack=False
-        )
-        self.entry_destino.pack(side="left", fill="x", expand=True)
+        self.btn_limpar = PillButton("Limpar campos", "secondary", width=130,
+                                     parent=row_actions)
+        self.btn_limpar.clicked.connect(self._limpar)
+        self.btn_gerar = PillButton("Gerar Excel", "primary", glyph="play", width=152,
+                                    parent=row_actions)
+        self.btn_gerar.clicked.connect(self._gerar)
+        actions_layout.addWidget(self.btn_limpar, 0)
+        actions_layout.addStretch(1)
+        actions_layout.addWidget(self.btn_gerar, 0)
+        root.addWidget(row_actions)
+        root.addSpacing(12)
 
-        self._browse_btn(row4, self._browse_destino).pack(side="left", padx=(6, 0))
+        # ── status ──────────────────────────────────────────────────────────
+        self.status = StatusBar(self)
+        self.status.set_message("Pronto para uso.")
+        root.addWidget(self.status)
 
-        # ── Container Inferior ────────────────────────────────────────────────
-        bottom_container = ctk.CTkFrame(outer, fg_color="transparent")
-        bottom_container.pack(side="bottom", fill="x")
+        # widgets que precisam de repintura/tokens
+        self._themed = [self.header, self.logo, self.divider, self.toggle, self.seg,
+                        self.select, self.btn_pasta, self.btn_destino,
+                        self.btn_limpar, self.btn_gerar, self.status]
 
-        # ── Divisor ───────────────────────────────────────────────────────────
-        div = ctk.CTkFrame(bottom_container, fg_color=NAVY_BORDER, height=1)
-        div.pack(fill="x", pady=(2, 12))  # [compacto] 4/16 → 2/12
+        # ordem de tabulação: formulário → ações
+        self.setTabOrder(self.entry_nome, self.entry_pasta)
+        self.setTabOrder(self.entry_pasta, self.btn_pasta)
+        self.setTabOrder(self.btn_pasta, self.seg._buttons[0])
+        self.setTabOrder(self.seg._buttons[0], self.seg._buttons[1])
+        self.setTabOrder(self.seg._buttons[1], self.seg._buttons[2])
+        self.setTabOrder(self.seg._buttons[2], self.seg._buttons[3])
+        self.setTabOrder(self.seg._buttons[3], self.select)
+        self.setTabOrder(self.select, self.entry_destino)
+        self.setTabOrder(self.entry_destino, self.btn_destino)
+        self.setTabOrder(self.btn_destino, self.btn_limpar)
+        self.setTabOrder(self.btn_limpar, self.btn_gerar)
 
-        # ── Botões de ação ────────────────────────────────────────────────────
-        btn_row = ctk.CTkFrame(bottom_container, fg_color="transparent")
-        btn_row.pack(fill="x")
+    def _section(self, root: QVBoxLayout, number: str, title: str) -> None:
+        row = QWidget(self)
+        row.setFixedHeight(20)
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
 
-        ctk.CTkButton(
-            btn_row,
-            text="Limpar campos",
-            width=120,  # [compacto] 130 → 120
-            height=34,  # [compacto] 40 → 34
-            fg_color=NAVY_SURFACE,
-            hover_color=NAVY_BORDER,
-            text_color=TEXT_SECONDARY,
-            border_width=1,
-            border_color=NAVY_BORDER,
-            corner_radius=RADIUS,
-            font=ctk.CTkFont(family="Segoe UI", size=12),  # [compacto] 13 → 12
-            command=self._limpar,
-        ).pack(side="left")
+        chip = QLabel(number, row)
+        chip.setObjectName("Chip")
+        chip.setFixedSize(20, 20)
+        chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        ctk.CTkButton(
-            btn_row,
-            text="▶  Gerar Excel",
-            height=34,  # [compacto] 40 → 34
-            fg_color=ACCENT_BLUE,
-            hover_color=ACCENT_HOVER,
-            text_color="#FFFFFF",
-            corner_radius=RADIUS,
-            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),  # [compacto] 13 → 12
-            command=self._gerar,
-        ).pack(side="right")
+        label = QLabel(title, row)
+        label.setObjectName("SectionTitle")
 
-        # ── Bloco de status ───────────────────────────────────────────────────
-        self.status_frame = ctk.CTkFrame(
-            bottom_container,
-            fg_color="#1B3A5C",
-            corner_radius=8,
-            border_width=0,
-            height=30,  # [compacto] 36 → 30
-        )
-        self.status_frame.pack(fill="x", pady=(10, 0))  # [compacto] 14 → 10
-        self.status_frame.pack_propagate(False)
+        layout.addWidget(chip, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(label, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addStretch(1)
 
-        self.lbl_status = ctk.CTkLabel(
-            self.status_frame,
-            text="Pronto para uso.",
-            font=ctk.CTkFont(family="Segoe UI", size=11),
-            text_color=TEXT_SECONDARY,
-            anchor="center",
-        )
-        self.lbl_status.pack(fill="x", padx=12, pady=6)  # [compacto] pady 8 → 6
+        root.addWidget(row)
+        root.addSpacing(5)
 
-    # ── Helpers de UI ─────────────────────────────────────────────────────────
-    def _section_label(self, parent, num: str, text: str):
-        row = ctk.CTkFrame(parent, fg_color="transparent")
-        row.pack(fill="x", pady=(0, 3))  # [compacto] 4 → 3
-
-        ctk.CTkLabel(
-            row,
-            text=num,
-            width=20, height=20,  # [compacto] 22/22 → 20/20
-            fg_color=ACCENT_BLUE,
-            text_color="#FFFFFF",
-            font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"),  # [compacto] 10 → 9
-            corner_radius=10,  # [compacto] 11 → 10
-        ).pack(side="left")
-
-        ctk.CTkLabel(
-            row,
-            text=f"  {text}",
-            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),  # [compacto] 12 → 11
-            text_color=TEXT_PRIMARY,
-        ).pack(side="left")
-
-    def _styled_entry(self, parent, placeholder: str, pack: bool = True):
-        entry = ctk.CTkEntry(
-            parent,
-            placeholder_text=placeholder,
-            placeholder_text_color=TEXT_SECONDARY,
-            fg_color=FIELD_BG,
-            border_color=NAVY_BORDER,
-            text_color=TEXT_PRIMARY,
-            border_width=1,
-            corner_radius=RADIUS,
-            height=32,  # [compacto] 38 → 32
-            font=ctk.CTkFont(family="Segoe UI", size=11),  # [compacto] 12 → 11
-        )
-        if pack:
-            entry.pack(fill="x", pady=(0, 10))  # [compacto] 14 → 10
+    def _entry(self, placeholder: str) -> QLineEdit:
+        entry = QLineEdit(self)
+        entry.setObjectName("Field")
+        entry.setFixedHeight(32)
+        entry.setPlaceholderText(placeholder)
+        entry.returnPressed.connect(self._gerar)
         return entry
 
-    def _browse_btn(self, parent, cmd):
-        return ctk.CTkButton(
-            parent,
-            text="📁",
-            width=36, height=32,  # [compacto] 40/38 → 36/32
-            fg_color=NAVY_SURFACE,
-            hover_color=NAVY_BORDER,
-            text_color=TEXT_PRIMARY,
-            border_width=1,
-            border_color=NAVY_BORDER,
-            corner_radius=RADIUS,
-            font=ctk.CTkFont(size=13),  # [compacto] 14 → 13
-            command=cmd,
-        )
+    def _center(self) -> None:
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        self.move(area.center().x() - self.width() // 2,
+                  area.center().y() - self.height() // 2)
 
-    # ── Callbacks ─────────────────────────────────────────────────────────────
-    def _browse_pasta(self):
-        path = filedialog.askdirectory(title="Selecionar pasta de entrada")
+    # ── tema ────────────────────────────────────────────────────────────────
+    def _set_theme(self, key: str) -> None:
+        if key not in THEMES or key == self._theme_key:
+            return
+        overlay = None
+        if self.isVisible() and not self.isMinimized():
+            overlay = self._snapshot()
+        self._theme_key = key
+        self.theme = THEMES[key]
+        self._apply_theme()
+        self._settings.setValue("tema", key)
+        if overlay is not None:
+            self._fade_out(overlay)
+
+    def _apply_theme(self) -> None:
+        t = self.theme
+        self.setStyleSheet(build_qss(t))
+        self.set_theme(t)                       # StarField
+        for widget in self._themed:
+            widget.set_theme(t)
+        self.lbl_author.setFont(F(9, QFont.Weight.DemiBold, 1.1))
+        self.setWindowIcon(make_app_icon(t))
+
+        for entry in (self.entry_nome, self.entry_pasta, self.entry_destino):
+            palette = entry.palette()
+            palette.setColor(QPalette.ColorRole.PlaceholderText, C(t.placeholder))
+            entry.setPalette(palette)
+
+        self._sync_primary_shadow(t)
+        self.header.set_shadow(t.shadow_alpha)
+
+    def _sync_primary_shadow(self, t: Theme) -> None:
+        glow = QColor(t.accent)
+        if t.key == "dark":
+            glow.setAlpha(95)
+            blur, offset = 26, 0
+        else:
+            glow.setAlpha(70)
+            blur, offset = 20, 4
+        shadow = QGraphicsDropShadowEffect(self.btn_gerar)
+        shadow.setBlurRadius(blur)
+        shadow.setOffset(0, offset)
+        shadow.setColor(glow)
+        self.btn_gerar.setGraphicsEffect(shadow)
+
+    def _snapshot(self) -> QLabel:
+        # se um fade anterior ainda está no ar, encerra antes de fotografar
+        previous = self._overlay
+        if previous is not None:
+            if self._fade_anim is not None:
+                self._fade_anim.stop()
+            previous.deleteLater()
+            self._overlay = None
+
+        pixmap = self.grab()
+        overlay = QLabel(self)
+        overlay.setObjectName("Snapshot")
+        overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        overlay.setStyleSheet("background: transparent; border: none;")
+        overlay.setPixmap(pixmap)
+        overlay.setGeometry(self.rect())
+        overlay.show()
+        overlay.raise_()
+        effect = QGraphicsOpacityEffect(overlay)
+        effect.setOpacity(1.0)
+        overlay.setGraphicsEffect(effect)
+        self._overlay = overlay
+        return overlay
+
+    def _fade_out(self, overlay: QLabel) -> None:
+        effect = overlay.graphicsEffect()
+        if effect is None:
+            overlay.deleteLater()
+            return
+        anim = QPropertyAnimation(effect, b"opacity", self)
+        anim.setDuration(260)
+        anim.setStartValue(1.0)
+        anim.setEndValue(0.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.finished.connect(overlay.deleteLater)
+        anim.finished.connect(self._on_fade_done)
+        anim.start()
+        self._fade_anim = anim
+
+    def _on_fade_done(self) -> None:
+        self._overlay = None
+        self._fade_anim = None
+
+    # ── callbacks operacionais (mesmo comportamento de antes) ──────────────
+    def _browse_pasta(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Selecionar pasta de entrada")
         if path:
-            self.entry_pasta.delete(0, "end")
-            self.entry_pasta.insert(0, path)
+            self.entry_pasta.setText(path)
             self._set_status(f"Pasta de entrada: {os.path.basename(path)}")
 
-    def _browse_destino(self):
-        path = filedialog.askdirectory(title="Selecionar pasta de destino")
+    def _browse_destino(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Selecionar pasta de destino")
         if path:
-            self.entry_destino.delete(0, "end")
-            self.entry_destino.insert(0, path)
+            self.entry_destino.setText(path)
             self._set_status(f"Destino definido: {os.path.basename(path)}")
 
-    def _limpar(self):
+    def _limpar(self) -> None:
         for entry in (self.entry_nome, self.entry_pasta, self.entry_destino):
-            entry.delete(0, "end")
-        self.sep_var.set("Não Separar")
-        self.cor_var.set("Azul")
+            entry.clear()
+        self.seg.set_value("Não Separar")
+        self.select.set_value("Azul")
         self._set_status("Campos limpos.")
 
-    def _gerar(self):
-        nome     = self.entry_nome.get().strip()
-        pasta    = self.entry_pasta.get().strip()
-        separar  = self.sep_var.get()
-        cor      = self.cor_var.get()
-        destino  = self.entry_destino.get().strip()
+    def _gerar(self) -> None:
+        if self._busy:
+            return
+
+        nome = self.entry_nome.text().strip()
+        pasta = self.entry_pasta.text().strip()
+        separar = self.seg.value()
+        cor = self.select.value()
+        destino = self.entry_destino.text().strip()
 
         if not nome or not pasta or not destino:
             campos = []
-            if not nome:    campos.append('Nome do arquivo')
-            if not pasta:   campos.append('Pasta de entrada')
-            if not destino: campos.append('Destino')
-            self._set_status(f"⚠  Campo(s) não preenchido(s): {', '.join(campos)}", estado='aviso')
+            if not nome:
+                campos.append("Nome do arquivo")
+            if not pasta:
+                campos.append("Pasta de entrada")
+            if not destino:
+                campos.append("Destino")
+            self._set_status(f"Campo(s) não preenchido(s): {', '.join(campos)}",
+                             estado="aviso")
             return
 
-        def _rodar():
-            self._set_status(f'⏳  Processando... · Separação: {separar}')
+        self._set_busy(True)
 
+        def _rodar() -> None:
+            self._emit_status(f"Processando... · Separação: {separar}")
             try:
                 from ope import executar
                 executar(
@@ -309,38 +1732,73 @@ class App(ctk.CTk):
                     nome=nome,
                     separar=separar,
                     cor=cor,
-                    cb_status=self._set_status,
+                    cb_status=self._emit_status,
                 )
-            except Exception as e:
-                self._set_status(f'✗  Erro fatal: {e}', estado='erro')
+            except Exception as e:  # noqa: BLE001 — mesma rede de segurança de antes
+                self._emit_status(f"Erro fatal: {e}", estado="erro")
+            finally:
+                self.thread_finished.emit()
 
         threading.Thread(target=_rodar, daemon=True).start()
 
-    def _set_status(self, msg: str, estado: str = None, warn: bool = False):
+    def _emit_status(self, msg: str, estado: str | None = None) -> None:
+        """Chamado da thread de trabalho — o sinal entrega na thread da GUI."""
+        self.status_requested.emit(str(msg), estado)
+
+    def _set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        self.btn_gerar.setEnabled(not busy)
+        effect = self.btn_gerar.graphicsEffect()
+        if effect is not None:
+            effect.setEnabled(not busy)
+        self.status.set_busy(busy)
+
+    def _on_finished(self) -> None:
+        self._set_busy(False)
+
+    def _set_status(self, msg: str, estado: str | None = None,
+                    warn: bool = False) -> None:
         if warn and estado is None:
-            estado = 'aviso'
+            estado = "aviso"
 
-        config = {
-            'ok':    ('#1A6B35', '#FFFFFF'),
-            'erro':  ('#8B1A1A', '#FFFFFF'),
-            'aviso': ('#B8860B', '#FFFFFF'),
-        }
-        bg, fg = config.get(estado, ('#1B3A5C', TEXT_SECONDARY))
+        message = self._clean_message(msg)
 
-        def _aplicar(b=bg, f=fg, m=msg, est=estado):
-            if est == 'ok':
-                from tkinter import messagebox
-                messagebox.showinfo("Sucesso", m)
-                self.status_frame.configure(fg_color='#1B3A5C')
-                self.lbl_status.configure(text="Pronto para uso.", text_color=TEXT_SECONDARY)
-            else:
-                self.status_frame.configure(fg_color=b)
-                self.lbl_status.configure(text=m, text_color=f)
+        if estado == "ok":
+            box = QMessageBox(self)
+            box.setWindowTitle("Sucesso")
+            box.setIconPixmap(make_success_pixmap(self.theme))
+            box.setTextFormat(Qt.TextFormat.PlainText)
+            box.setText(message)
+            box.setStandardButtons(QMessageBox.StandardButton.Ok)
+            box.exec()
+            self.status.set_message("Pronto para uso.", "idle")
+            return
 
-        self.after(0, _aplicar)
+        self.status.set_message(message, estado or "idle")
+
+    @staticmethod
+    def _clean_message(msg: str) -> str:
+        """Os prefixos de ícone do fluxo antigo viram o ponto colorido da barra."""
+        text = str(msg)
+        for symbol in ("⚠", "✗", "⏳", "✓", "✅", "❌"):
+            text = text.replace(symbol, "")
+        return " ".join(text.split())
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+#  ENTRY POINT
+# ══════════════════════════════════════════════════════════════════════════════
+def main() -> int:
+    app = QApplication.instance() or QApplication([])
+    app.setStyle("Fusion")
+    app.setApplicationName("PagFlow")
+    app.setApplicationDisplayName("PagFlow Excel")
+    app.setFont(F(11))
+
+    window = App()
+    window.show()
+    return app.exec()
+
+
 if __name__ == "__main__":
-    app = App()
-    app.mainloop()
+    raise SystemExit(main())

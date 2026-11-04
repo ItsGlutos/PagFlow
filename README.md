@@ -12,6 +12,22 @@ O diferencial está em aceitar simultaneamente dois layouts de relatório SAP di
 
 ---
 
+## Interface
+
+A interface é construída em **PyQt6** e trabalha com dois temas completos, alternados pela chave no canto superior direito. A escolha é lembrada entre execuções.
+
+| Tema escuro | Tema claro |
+|---|---|
+| ![Tema escuro](docs/tema-escuro.png) | ![Tema claro](docs/tema-claro.png) |
+
+**Tema escuro** — céu noturno em azul-marinho, com estrelas pequenas em tons de azul que crescem e diminuem lentamente, e destaque no azul da marca.
+
+**Tema claro** — a mesma composição em céu diurno: fundos claros, textos em azul-marinho e o azul-celeste como cor de destaque.
+
+A geometria é idêntica nos dois temas (janela 500 × 610, campos de 32 px, cartões de raio 12): a troca altera apenas as cores, as sombras e o céu.
+
+---
+
 ## Pré-requisitos
 
 - Windows 10 ou superior
@@ -28,7 +44,7 @@ Execute o `instalador_flow.exe`. É comum que o Windows exiba um aviso de segura
 
 ## Como usar
 
-A interface é dividida em quatro campos de configuração, preenchidos antes de iniciar o processamento.
+A interface é dividida em cinco campos de configuração, preenchidos antes de iniciar o processamento. A chave no topo alterna entre o tema escuro e o claro a qualquer momento — nenhum campo é perdido na troca.
 
 **Nome do arquivo**
 Define o nome base do `.xlsx` que será gerado, sem extensão.
@@ -52,7 +68,7 @@ Personalização visual da tabela: Azul, Verde, Roxo ou Vermelho.
 **Pasta de destino**
 Onde o `.xlsx` final será salvo.
 
-Após preencher todos os campos, clique em **Processar e Gerar**.
+Após preencher todos os campos, clique em **Gerar Excel**. Enquanto o processamento roda, a barra de status mostra o progresso e o botão fica desabilitado para evitar execuções simultâneas.
 
 ---
 
@@ -95,11 +111,26 @@ Arquivos .xls (pasta de origem)
 
 ```
 .
-├── main.py          # Interface gráfica (customtkinter) e ponto de entrada
+├── main.py          # Interface gráfica (PyQt6) e ponto de entrada
 ├── ope.py           # Orquestração: leitura da pasta, concatenação e chamada de exportação
 ├── funcoes.py       # Lógica de negócio: detecção, tratamento e exportação
+├── requirements.txt # Dependências para rodar a partir do código-fonte
+├── docs/            # Capturas dos dois temas
 └── PagFlow.spec     # Configuração do PyInstaller para geração do executável
 ```
+
+---
+
+## Desenvolvimento
+
+Requer Python 3.10 ou superior.
+
+```bash
+pip install -r requirements.txt
+python main.py
+```
+
+O `main.py` cuida apenas da interface: temas, céu estrelado, controles e a barra de status. A execução continua sendo delegada ao `ope.executar()` — o mesmo caminho usado pela linha de comando do `ope.py`.
 
 ---
 

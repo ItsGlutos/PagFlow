@@ -1,5 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+
+# Ícone do executável — opcional, para o build não quebrar em outra máquina
+ICONE = (r'C:\Users\gustavo.pinheiro\OneDrive - DISTRIBUIDORA DE MEDICAMENTOS '
+         r'SANTA CRUZ LTDA\Documentos\PagFlow.ico')
 
 a = Analysis(
     ['main.py'],
@@ -32,7 +37,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['C:\\Users\\gustavo.pinheiro\\OneDrive - DISTRIBUIDORA DE MEDICAMENTOS SANTA CRUZ LTDA\\Documentos\\PagFlow.ico'],
+    icon=[ICONE] if os.path.exists(ICONE) else [],
 )
 coll = COLLECT(
     exe,
