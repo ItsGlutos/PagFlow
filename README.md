@@ -24,7 +24,7 @@ A interface é construída em **PyQt6** e trabalha com dois temas completos, alt
 
 **Tema claro** — a mesma composição em céu diurno: fundos claros, textos em azul-marinho e o azul-celeste como cor de destaque.
 
-A geometria é idêntica nos dois temas (janela 500 × 610, campos de 32 px, cartões de raio 12): a troca altera apenas as cores, as sombras e o céu.
+A geometria é idêntica nos dois temas (janela 500 × 680, campos de 32 px, cartões de raio 12): a troca altera apenas as cores, as sombras e o céu.
 
 ---
 
@@ -72,6 +72,23 @@ Após preencher todos os campos, clique em **Gerar Excel**. Enquanto o processam
 
 ---
 
+## Envio de e-mails
+
+A segunda tela, **Envio de e-mails**, dispara pelo Outlook Desktop os relatórios já gerados pelo PagFlow. A troca entre as duas telas é feita por um seletor mínimo no topo da janela (duas palavras e uma pílula que desliza): ao trocar, a tela atual se dissolve e a outra assume o mesmo lugar, como se o usuário tivesse mudado de janela dentro do programa. Nada rola, nada é reflowado e a janela não muda de tamanho — só o conteúdo se dissolve, em 240 ms.
+
+![Tela de envio de e-mails](docs/envio-escuro.png)
+
+O fluxo é:
+
+1. **Planilha de contatos** — um `.xlsx` com as colunas `Fornecedor`, `Nome` e `E-mail(s)`. O `Nome` é o *Nome Simples* (sem LTDA e extensões) que entra automaticamente no e-mail através da variável `{fornecedor}`.
+2. **Pasta com os relatórios** — o usuário indica a pasta com os `.xlsx` gerados; o PagFlow abre cada arquivo e localiza a coluna **Fornecedor** em **todas** as abas.
+3. **Validação** — cada arquivo deve conter um **único** fornecedor; se houver dois fornecedores diferentes na mesma pasta de trabalho, a linha é bloqueada e sinalizada na tabela de revisão.
+4. **Confirmação** — uma janela mostra cada arquivo relacionado ao seu Nome Simples e destinatários, com a pergunta *"Tem certeza que deseja enviar X e-mails?"*. Somente os grupos marcados são disparados.
+
+O assunto e o corpo são editáveis (o corpo tem um padrão sugerido e pode ser restaurado). O envio é feito um e-mail por arquivo, com o relatório anexado, usando `pywin32` + Outlook Desktop — a mesma lógica do projeto de referência `ins_dashboard_app`.
+
+---
+
 ## Pipeline interno
 
 ```
@@ -114,6 +131,7 @@ Arquivos .xls (pasta de origem)
 ├── main.py          # Interface gráfica (PyQt6) e ponto de entrada
 ├── ope.py           # Orquestração: leitura da pasta, concatenação e chamada de exportação
 ├── funcoes.py       # Lógica de negócio: detecção, tratamento e exportação
+├── envios.py        # Envio dos relatórios por fornecedor via Outlook Desktop
 ├── requirements.txt # Dependências para rodar a partir do código-fonte
 ├── docs/            # Capturas dos dois temas
 └── PagFlow.spec     # Configuração do PyInstaller para geração do executável

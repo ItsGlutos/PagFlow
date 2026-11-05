@@ -11,7 +11,15 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=[],
+    hiddenimports=[
+        # Envio de e-mails via Outlook Desktop (pywin32, importado de forma
+        # lazy em envios.py — precisa ser declarado para o PyInstaller embutir).
+        'envios',
+        'win32com',
+        'win32com.client',
+        'pythoncom',
+        'win32timezone',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
