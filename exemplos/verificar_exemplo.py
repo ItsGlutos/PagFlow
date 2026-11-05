@@ -24,12 +24,13 @@ import pandas as pd
 
 from funcoes import detectar_relat, processar_arquivo
 from ope import executar
+from envios import _bloqueado, _ler_relatorio
 from gerar_dados_exemplo import gerar
 
 ESQUEMA = [
     "Empresa", "Fornecedor", "LNeg", "Referência", "Nº documento",
     "Data doc.", "Doc. Compensação", "Valor", "Vencimento", "Texto",
-    "Tipo", "Compensaç.",
+    "Tipo", "Compensaç.", "Bloqueio",
 ]
 
 falhas: list[str] = []
@@ -50,14 +51,25 @@ def main() -> int:
     checar(tipo_fbl1n == "A", f"{fbl1n.name} detectado como Tipo A (FBL1N)")
     checar(tipo_rel_log == "B", f"{rel_log.name} detectado como Tipo B (REL_LOG)")
 
+    print("\n[1b] Regra de bloqueio")
+    checar(
+        _bloqueado("B") and not _bloqueado("S") and not _bloqueado("")
+        and not _bloqueado(None),
+        "B = bloqueado; S/branco = sem bloqueio",
+    )
+
     print("\n[2] Tratamento por arquivo")
     frames = {}
     for caminho in caminhos:
         df = processar_arquivo(caminho)
         frames[caminho.name] = df
         checar(
-            set(df.columns) == set(ESQUEMA) and len(df.columns) == 12,
-            f"{caminho.name}: 12 colunas no esquema padrão",
+            set(df.columns) == set(ESQUEMA) and len(df.columns) == 13,
+            f"{caminho.name}: 13 colunas no esquema padrão",
+        )
+        checar(
+            df["Bloqueio"].astype(str).str.strip().str.upper().eq("B").any(),
+            f"{caminho.name}: ao menos uma linha com bloqueio B",
         )
         checar(
             set(df["Tipo"].unique()) <= {"RE", "KT", "RF"},
@@ -118,6 +130,20 @@ def main() -> int:
         nomes_abas = sorted(wb.sheetnames)
         esperadas = sorted(frames[fbl1n.name]["Empresa"].unique())
         checar(nomes_abas == esperadas, f"abas por Marca: {nomes_abas}")
+
+        print("\n[4] Avisos de bloqueio e CFD")
+        info = _ler_relatorio(xlsx)
+        checar(
+            info.documentos_bloqueados == 6
+            and abs(info.valor_bloqueado - 12915.90) < 0.01,
+            f"bloqueios agregados: {info.documentos_bloqueados} doc(s), "
+            f"R$ {info.valor_bloqueado:.2f}",
+        )
+        checar(
+            info.documentos_cfd == 2 and abs(info.valor_cfd - 1450.00) < 0.01,
+            f"CFD agregado: {info.documentos_cfd} doc(s), "
+            f"R$ {info.valor_cfd:.2f}",
+        )
 
     print()
     if falhas:

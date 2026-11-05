@@ -24,7 +24,7 @@ A interface é construída em **PyQt6** e trabalha com dois temas completos, alt
 
 **Tema claro** — a mesma composição em céu diurno: fundos claros, textos em azul-marinho e o azul-celeste como cor de destaque.
 
-A geometria é idêntica nos dois temas (janela 500 × 680, campos de 32 px, cartões de raio 12): a troca altera apenas as cores, as sombras e o céu.
+A geometria é idêntica nos dois temas (campos de 32 px, cartões de raio 12): a troca altera apenas as cores, as sombras e o céu. A janela assume a proporção **4:3** e é dimensionada na abertura para o maior retângulo que caiba na área útil do monitor (com teto de 1280 × 960), reencaixando-se se for movida para outra tela.
 
 ---
 
@@ -80,12 +80,19 @@ A segunda tela, **Envio de e-mails**, dispara pelo Outlook Desktop os relatório
 
 O fluxo é:
 
-1. **Planilha de contatos** — um `.xlsx` com as colunas `Fornecedor`, `Nome` e `E-mail(s)`. O `Nome` é o *Nome Simples* (sem LTDA e extensões) que entra automaticamente no e-mail através da variável `{fornecedor}`.
+1. **Planilha de contatos** — um `.xlsx` com as colunas `Transportadora`, `Fornecedor` e `E-mail(s)`. A `Transportadora` traz o *Nome Simples* e o `Fornecedor` traz o código; o cruzamento entre os dois é feito como um *procv* (código → Transportadora), e é esse nome que entra automaticamente no e-mail através da variável `{fornecedor}`. Quaisquer outras colunas da planilha são descartadas.
 2. **Pasta com os relatórios** — o usuário indica a pasta com os `.xlsx` gerados; o PagFlow abre cada arquivo e localiza a coluna **Fornecedor** em **todas** as abas.
-3. **Validação** — cada arquivo deve conter um **único** fornecedor; se houver dois fornecedores diferentes na mesma pasta de trabalho, a linha é bloqueada e sinalizada na tabela de revisão.
-4. **Confirmação** — uma janela mostra cada arquivo relacionado ao seu Nome Simples e destinatários, com a pergunta *"Tem certeza que deseja enviar X e-mails?"*. Somente os grupos marcados são disparados.
+3. **Validação** — um transportador pode ter vários códigos de fornecedor; o arquivo pode conter todos eles, desde que não reúna transportadoras diferentes. Caso reúna, a linha é bloqueada e sinalizada na tabela de revisão.
+4. **Confirmação** — uma janela mostra cada arquivo relacionado à sua Transportadora e destinatários, com a pergunta *"Tem certeza que deseja enviar X e-mails?"*. A coluna **Avisos** exibe os totais de bloqueio e CFD que entrarão no corpo. Somente os grupos marcados são disparados.
 
 O assunto e o corpo são editáveis (o corpo tem um padrão sugerido e pode ser restaurado). O envio é feito um e-mail por arquivo, com o relatório anexado, usando `pywin32` + Outlook Desktop — a mesma lógica do projeto de referência `ins_dashboard_app`.
+
+O corpo é complementado automaticamente, antes da despedida, quando o relatório traz essas informações:
+
+- **Bloqueios** — se a coluna `BlP` (FBL1N) ou `BIP` (REL_LOG) indicar bloqueio com `B`, o e-mail informa quantos documentos estão bloqueados e o valor total bloqueado.
+- **CFD** — se houver documentos do tipo `KT`, o e-mail informa o valor total de CFD (Confissão de Dívida) e a quantidade de documentos.
+
+Os valores são somados em módulo (sempre positivos) e consideram todas as abas do arquivo. A assinatura padrão é **Time Fretes - Distribuição Farma**.
 
 ---
 
@@ -103,11 +110,13 @@ Arquivos .xls (pasta de origem)
         ▼
   tratamento_fbl1n() ou tratamento_log()
   ├── Remove colunas "Unnamed" e colunas desnecessárias por índice posicional
+  ├── Preserva a coluna de bloqueio (BlP/BIP) pelo cabeçalho
   ├── Renomeia colunas para esquema padrão unificado
   ├── Converte campo "Valor" via parse_sap_valor()
   │   └── Trata sinal negativo no fim da string (padrão SAP de créditos)
   ├── Converte tipos: texto, Int64 e datetime (dd/mm/yyyy)
-  └── Filtra apenas os tipos de documento: RE, KT, RF
+  ├── Filtra apenas os tipos de documento: RE, KT, RF
+  └── Reanexa o bloqueio como coluna "Bloqueio" ao final do esquema
         │
         ▼
   Concatenação de todos os DataFrames tratados
@@ -158,7 +167,7 @@ O `main.py` cuida apenas da interface: temas, céu estrelado, controles e a barr
 |---|---|
 | KL | Fatura |
 | RE | Documento Contábil |
-| KT | Confissão de Dívida |
+| KT | Confissão de Dívida (CFD) |
 | RF | Nota Fiscal da Seguradora |
 
 Linhas com outros tipos de documento são descartadas no tratamento.
@@ -172,3 +181,5 @@ Os arquivos `.xls` exportados pelo SAP neste contexto não são planilhas binár
 Valores monetários no SAP podem vir com o sinal de menos no final da string (ex: `1.500,00-`), formato que o pandas não converte nativamente. A função `parse_sap_valor` trata esse caso antes da conversão numérica.
 
 O arquivo `.xlsx` é escrito primeiro em um caminho temporário e só é movido para o destino final após a conclusão, evitando que o usuário veja um arquivo corrompido ou parcialmente escrito.
+
+A coluna de bloqueio tem nome diferente em cada layout: `BlP` no FBL1N e `BIP` no REL_LOG. Como ela fica em uma posição que o tratamento descarta, o PagFlow a localiza pelo cabeçalho antes dos descartes e a devolve ao final do relatório como **Bloqueio**, preservando o valor original do SAP (`B` para bloqueado, `S`/branco para sem bloqueio).

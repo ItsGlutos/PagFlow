@@ -82,6 +82,77 @@ def parse_sap_valor(val):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# FUNÇÃO: localizar_coluna_bloqueio
+# Objetivo: Encontrar a coluna de bloqueio no extrato bruto, sem depender da
+#           posição em que ela aparece em cada layout.
+#
+#   • FBL1N  → cabeçalho "BlP"
+#   • REL_LOG → cabeçalho "BIP"
+#
+# Também aceita "Bloqueio", "Bloq." e variações, para não quebrar se o SAP
+# mudar o rótulo. Retorna None quando o relatório não traz essa informação.
+# ──────────────────────────────────────────────────────────────────────────────
+def localizar_coluna_bloqueio(df):
+    import re
+    import unicodedata
+
+    def chave(nome):
+        decomposto = unicodedata.normalize('NFKD', str(nome))
+        sem_acento = ''.join(
+            caractere for caractere in decomposto
+            if not unicodedata.combining(caractere)
+        )
+        return re.sub(r'[^a-z0-9]+', ' ', sem_acento.lower()).strip()
+
+    aliases = {
+        'blp', 'bip', 'bloq', 'bloqueio',
+        'bloqueio de pagamento', 'bloqueio pagamento',
+        'bloqueio de pgto', 'bloqueio pgto',
+        'bloqueio do pagamento',
+    }
+
+    # Primeiro tenta o nome exato (evita falsos positivos)
+    for coluna in df.columns:
+        if chave(coluna) in aliases:
+            return coluna
+
+    # Depois aceita variações que comecem/containham o termo
+    for coluna in df.columns:
+        nome = chave(coluna)
+        if nome.startswith(('blp', 'bip')) or 'bloqueio' in nome:
+            return coluna
+
+    return None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# FUNÇÃO: _inserir_bloqueio
+# Objetivo: Acrescentar a coluna "Bloqueio" ao DataFrame tratado, preservando
+#           o valor original do SAP (ex.: "B" para bloqueado, "S" para livre).
+#           Ela entra ao final para não deslocar as colunas já existentes.
+#           Quando o relatório não possui a coluna, ela entra vazia para que
+#           todos os arquivos tenham o mesmo esquema na consolidação.
+# ──────────────────────────────────────────────────────────────────────────────
+def _inserir_bloqueio(df, serie_bloqueio):
+    import pandas as pd
+
+    df = df.copy()
+
+    if serie_bloqueio is None:
+        valores = pd.Series('', index=df.index, dtype=object)
+    else:
+        valores = serie_bloqueio.reindex(df.index)
+        valores = valores.map(
+            lambda valor: '' if pd.isna(valor) else str(valor).strip()
+        )
+
+    # [gerado] Anexa ao final para não deslocar as colunas já existentes —
+    # a exportação e os totais continuam usando as mesmas posições de antes.
+    df['Bloqueio'] = valores
+    return df
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # FUNÇÃO: tratamento_fbl1n
 # Objetivo: Limpar e padronizar o DataFrame do relatório FBL1N (Tipo A).
 #
@@ -109,6 +180,11 @@ def tratamento_fbl1n(df):
     # Passo 1 – Remove qualquer coluna cujo nome comece com 'Unnamed'
     df_limpo = df.loc[:, ~df.columns.str.contains('^Unnamed')]
 
+    # [gerado] Guarda a coluna de bloqueio (BlP/BIP) antes dos descartes
+    # posicionais — no FBL1N ela costuma cair justamente entre as descartadas.
+    coluna_bloqueio = localizar_coluna_bloqueio(df)
+    serie_bloqueio = df[coluna_bloqueio] if coluna_bloqueio is not None else None
+
     # Passo 2 – Remove colunas posicionais que não são usadas neste relatório
     df_limpo = df_limpo.drop(df_limpo.columns[[0, 12, 14, 15]], axis=1)
 
@@ -132,7 +208,10 @@ def tratamento_fbl1n(df):
         df_limpo[coluna] = pd.to_datetime(df_limpo[coluna], format='%d/%m/%Y', errors='coerce')
 
     # Passo 6 – Filtra apenas os tipos de documento relevantes
-    df_filtrado = df_limpo[df_limpo['Tipo'].isin(puxar_apenas)]
+    df_filtrado = df_limpo[df_limpo['Tipo'].isin(puxar_apenas)].copy()
+
+    # [gerado] Recoloca o bloqueio no esquema final do relatório
+    df_filtrado = _inserir_bloqueio(df_filtrado, serie_bloqueio)
 
     return df_filtrado
 
@@ -161,6 +240,11 @@ def tratamento_log(df):
 
     # Passo 1 – Remove colunas 'Unnamed'
     df_limpo = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+
+    # [gerado] Guarda a coluna de bloqueio (BlP/BIP) antes dos descartes
+    # posicionais — no REL_LOG o "BIP" é o índice 8, que atualmente é removido.
+    coluna_bloqueio = localizar_coluna_bloqueio(df)
+    serie_bloqueio = df[coluna_bloqueio] if coluna_bloqueio is not None else None
 
     # Passo 2 – Remove colunas desnecessárias do layout REL_LOG
     # Os índices são removidos do maior para o menor para não deslocar as posições
@@ -199,7 +283,10 @@ def tratamento_log(df):
         df_limpo[coluna] = pd.to_datetime(df_limpo[coluna], format='%d/%m/%Y', errors='coerce')
 
     # Passo 6 – Filtra tipos de documento relevantes
-    df_filtrado = df_limpo[df_limpo['Tipo'].isin(puxar_apenas)]
+    df_filtrado = df_limpo[df_limpo['Tipo'].isin(puxar_apenas)].copy()
+
+    # [gerado] Recoloca o bloqueio no esquema final do relatório
+    df_filtrado = _inserir_bloqueio(df_filtrado, serie_bloqueio)
 
     return df_filtrado
 

@@ -24,7 +24,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import (
     QEasingCurve, QElapsedTimer, QEvent, QPoint, QPointF, QPropertyAnimation,
-    QRect, QRectF, QSettings, Qt, QTimer, QVariantAnimation, pyqtSignal,
+    QRect, QRectF, QSettings, QSize, Qt, QTimer, QVariantAnimation, pyqtSignal,
 )
 from PyQt6.QtGui import (
     QBrush, QColor, QFont, QFontMetrics, QGuiApplication, QIcon, QLinearGradient,
@@ -1274,7 +1274,7 @@ class StatusBar(QWidget):
         self._state = "idle"
         self._busy = False
         self._angle = 0
-        self.setFixedHeight(36)
+        self.setFixedHeight(32)
         self.setFont(F(11))
         self._timer = QTimer(self)
         self._timer.setInterval(16)
@@ -1425,6 +1425,20 @@ class CheckBox(QAbstractButton):
                 int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
                 self.text(),
             )
+
+    def sizeHint(self) -> QSize:
+        """Tamanho da caixa + texto.
+
+        O ``QAbstractButton`` puro devolve 0×0 para este desenho customizado;
+        sem um ``sizeHint`` o checkbox some dentro dos layouts.
+        """
+        if not self.text():
+            return QSize(20, 20)
+        largura = 30 + QFontMetrics(F(11)).horizontalAdvance(self.text())
+        return QSize(largura, 22)
+
+    def minimumSizeHint(self) -> QSize:
+        return self.sizeHint()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1731,14 +1745,14 @@ ENVIO_CORPO_PADRAO = (
     "realizado.\n\n"
     "Em caso de dúvidas, permanecemos à disposição.\n\n"
     "Atenciosamente,\n"
-    "Equipe Financeira"
+    "Time Fretes - Distribuição Farma"
 )
 
 
 class ConfirmarEnvioDialog(QDialog):
-    """Tabela de revisão: cada arquivo xlsx ↔ Nome Simples, antes do disparo."""
+    """Tabela de revisão: cada arquivo xlsx ↔ Transportadora, antes do disparo."""
 
-    _COLUNAS = ["", "Arquivo", "Fornecedor", "Nome simples", "E-mails", "Situação"]
+    _COLUNAS = ["", "Arquivo", "Fornecedor", "Transportadora", "E-mails", "Situação", "Avisos"]
 
     def __init__(self, plano, theme: Theme, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1756,6 +1770,7 @@ class ConfirmarEnvioDialog(QDialog):
 
         self._build_ui()
         self._populate()
+        self._sync_theme()
         self._building = False
         self._update_selection()
         self.table.setFocus()
@@ -1775,9 +1790,10 @@ class ConfirmarEnvioDialog(QDialog):
         layout.addWidget(title)
 
         subtitle = QLabel(
-            "Cada linha é um arquivo do PagFlow relacionado ao seu Nome Simples "
+            "Cada linha é um arquivo do PagFlow relacionado à sua Transportadora "
             "na planilha de contatos. Ao confirmar, os e-mails marcados serão "
-            "enviados imediatamente pelo Outlook Desktop, com o arquivo anexado.",
+            "enviados imediatamente pelo Outlook Desktop, com o arquivo anexado. "
+            "Bloqueios e documentos KT (CFD) entram automaticamente no corpo.",
             self,
         )
         subtitle.setObjectName("DialogSubtitle")
@@ -1795,12 +1811,29 @@ class ConfirmarEnvioDialog(QDialog):
         self.stats.setObjectName("Hint")
         self.stats.setWordWrap(True)
         topo.addWidget(self.stats, 1)
+        layout.addLayout(topo)
 
-        self.select_all = CheckBox("Selecionar todos os grupos prontos", self)
+        # [gerado] Seleção em massa, em linha própria acima da tabela
+        linha_selecao = QHBoxLayout()
+        linha_selecao.setSpacing(10)
+
+        self.select_all = CheckBox("Selecionar todos", self)
+        self.select_all.setToolTip(
+            "Marcar ou desmarcar todos os grupos prontos para envio"
+        )
         self.select_all.setChecked(True)
         self.select_all.toggled.connect(self._toggle_all)
-        topo.addWidget(self.select_all, 0)
-        layout.addLayout(topo)
+        linha_selecao.addWidget(self.select_all, 0)
+
+        dica_selecao = QLabel(
+            "Inclui todos os grupos prontos; os grupos com pendência "
+            "continuam bloqueados.",
+            self,
+        )
+        dica_selecao.setObjectName("Hint")
+        dica_selecao.setWordWrap(True)
+        linha_selecao.addWidget(dica_selecao, 1)
+        layout.addLayout(linha_selecao)
 
         self.table = QTableWidget(0, len(self._COLUNAS), self)
         self.table.setObjectName("confirmTable")
@@ -1821,10 +1854,12 @@ class ConfirmarEnvioDialog(QDialog):
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Interactive)
         self.table.setColumnWidth(0, 42)
         self.table.setColumnWidth(1, 200)
         self.table.setColumnWidth(2, 90)
         self.table.setColumnWidth(5, 160)
+        self.table.setColumnWidth(6, 210)
         layout.addWidget(self.table, 1)
 
         rodape = QHBoxLayout()
@@ -1860,6 +1895,13 @@ class ConfirmarEnvioDialog(QDialog):
         for linha, grupo in enumerate(self._groups):
             self._fill_row(linha, grupo)
 
+    def _sync_theme(self) -> None:
+        """Propaga o tema para os controles desenhados à mão no diálogo."""
+        for check in self.findChildren(CheckBox):
+            check.set_theme(self._theme)
+        for botao in self.findChildren(PillButton):
+            botao.set_theme(self._theme)
+
     def _fill_row(self, linha: int, grupo) -> None:
         container = QWidget(self.table)
         cl = QHBoxLayout(container)
@@ -1887,7 +1929,10 @@ class ConfirmarEnvioDialog(QDialog):
         fornecedor = QTableWidgetItem(
             ", ".join(grupo.fornecedores) if grupo.fornecedores else "—"
         )
-        fornecedor.setToolTip("Código(s) de fornecedor encontrados no arquivo")
+        fornecedor.setToolTip(
+            "Código(s) de fornecedor encontrados no arquivo "
+            "(uma transportadora pode ter vários)"
+        )
         self.table.setItem(linha, 2, fornecedor)
 
         nome = QTableWidgetItem(grupo.nome or "—")
@@ -1912,6 +1957,18 @@ class ConfirmarEnvioDialog(QDialog):
         )
         situacao.setToolTip(grupo.detalhe or grupo.rotulo_status)
         self.table.setItem(linha, 5, situacao)
+
+        avisos = QTableWidgetItem(grupo.resumo_avisos or "—")
+        avisos.setForeground(
+            QBrush(C(self._theme.warn_fg)) if grupo.tem_avisos
+            else QBrush(C(self._theme.text_muted))
+        )
+        avisos.setToolTip(
+            "Avisos incluídos automaticamente no corpo do e-mail."
+            if grupo.tem_avisos
+            else "Sem bloqueios e sem documentos KT (CFD) neste arquivo."
+        )
+        self.table.setItem(linha, 6, avisos)
 
     # ── seleção ─────────────────────────────────────────────────────────────
     def selected_keys(self) -> list[str]:
@@ -1996,14 +2053,14 @@ class EnvioPage(QWidget):
         row1_lay.setContentsMargins(0, 0, 0, 0)
         row1_lay.setSpacing(8)
         self.entry_contatos = self._entry(
-            "Fornecedor · Nome · E-mails (arquivo .xlsx)"
+            "Transportadora · Fornecedor · E-mails (arquivo .xlsx)"
         )
         self.btn_contatos = IconButton("file", "Selecionar planilha de contatos", row1)
         self.btn_contatos.clicked.connect(self._browse_contatos)
         row1_lay.addWidget(self.entry_contatos, 1)
         row1_lay.addWidget(self.btn_contatos, 0)
         root.addWidget(row1)
-        root.addSpacing(13)
+        root.addSpacing(9)
 
         # ── 2 · pasta dos relatórios ───────────────────────────────────────
         self._section(root, "2", "Pasta com os relatórios gerados")
@@ -2020,12 +2077,14 @@ class EnvioPage(QWidget):
         root.addSpacing(5)
 
         aviso = QLabel(
-            "Cada arquivo .xlsx precisa conter um único fornecedor.",
+            "Um arquivo pode conter vários códigos de fornecedor, desde que "
+            "todos sejam da mesma transportadora.",
             self,
         )
         aviso.setObjectName("Hint")
+        aviso.setWordWrap(True)
         root.addWidget(aviso)
-        root.addSpacing(11)
+        root.addSpacing(8)
 
         # ── 3 · mensagem ───────────────────────────────────────────────────
         self._section(root, "3", "Mensagem")
@@ -2034,7 +2093,7 @@ class EnvioPage(QWidget):
         root.addWidget(caption_assunto)
         self.entry_assunto = self._entry("ex.: {fornecedor} — Relatório de pagamento")
         root.addWidget(self.entry_assunto)
-        root.addSpacing(8)
+        root.addSpacing(6)
 
         # legenda do corpo e atalhos dividem a mesma linha: o editor ganha altura
         row_corpo = QWidget(self)
@@ -2046,11 +2105,11 @@ class EnvioPage(QWidget):
         caption_corpo.setObjectName("FieldCaption")
         corpo_lay.addWidget(caption_corpo, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        dica_corpo = QLabel("{fornecedor} → Nome Simples", row_corpo)
+        dica_corpo = QLabel("{fornecedor} → Transportadora (Nome Simples)", row_corpo)
         dica_corpo.setObjectName("FieldCaption")
         dica_corpo.setToolTip(
-            "A variável {fornecedor} é substituída pelo Nome Simples "
-            "cadastrado na planilha de contatos."
+            "A variável {fornecedor} é substituída pela Transportadora "
+            "(Nome Simples) localizada pelo código na planilha de contatos."
         )
         corpo_lay.addWidget(dica_corpo, 0, Qt.AlignmentFlag.AlignVCenter)
         corpo_lay.addStretch(1)
@@ -2069,19 +2128,21 @@ class EnvioPage(QWidget):
         corpo_lay.addWidget(self.btn_restaurar, 0, Qt.AlignmentFlag.AlignVCenter)
 
         root.addWidget(row_corpo)
-        root.addSpacing(5)
+        root.addSpacing(4)
 
         self.body = QTextEdit(self)
         self.body.setObjectName("Body")
         self.body.setAcceptRichText(False)
-        self.body.setMinimumHeight(140)
+        # Piso baixo para caber em telas pequenas/DPI alto; em telas normais o
+        # editor recebe todo o espaço vertical restante (stretch).
+        self.body.setMinimumHeight(100)
         self.body.setPlaceholderText("Escreva o corpo do e-mail…")
         root.addWidget(self.body, 1)
 
-        root.addSpacing(5)
+        root.addSpacing(4)
         self.divider = Divider(self)
         root.addWidget(self.divider)
-        root.addSpacing(11)
+        root.addSpacing(8)
 
         # ── ações ──────────────────────────────────────────────────────────
         row_actions = QWidget(self)
@@ -2123,7 +2184,7 @@ class EnvioPage(QWidget):
         row_lay.addStretch(1)
 
         layout.addWidget(row)
-        layout.addSpacing(5)
+        layout.addSpacing(3)
 
     def _entry(self, placeholder: str) -> QLineEdit:
         entry = QLineEdit(self)
@@ -2306,6 +2367,11 @@ class EnvioPage(QWidget):
         pasta = str(self._settings.value("envios/pasta", "") or "")
         assunto = str(self._settings.value("envios/assunto", "") or "")
         corpo = str(self._settings.value("envios/corpo", "") or "")
+        # [gerado] Migra a assinatura antiga salva nas preferências do usuário
+        if "Equipe Financeira" in corpo:
+            corpo = corpo.replace(
+                "Equipe Financeira", "Time Fretes - Distribuição Farma"
+            )
         if contatos:
             self.entry_contatos.setText(contatos)
         if pasta:
@@ -2501,13 +2567,20 @@ class App(StarField):
     status_requested = pyqtSignal(str, object)   # (mensagem, estado)
     thread_finished = pyqtSignal()
 
+    # Proporção fixa da janela (largura × altura) e teto em monitores grandes.
+    _PROPORCAO = (4, 3)
+    _TAMANHO_MAX = (1280, 960)
+    _FOLGA_TELA = 8           # respiro entre a moldura e a área útil
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("PagFlow Excel")
-        # Janela de tamanho fixo: trocar de tela nunca redimensiona nada —
+        # Janela de tamanho fixo, mas calculado a partir da tela: 4:3 e sempre
+        # dentro da área útil do monitor. Trocar de tela nunca redimensiona —
         # uma página se dissolve na outra, no mesmo retângulo, sem reflow.
         self._current_tab = 0
-        self.setFixedSize(500, 680)
+        self._screen_hooked = False
+        self._fit_to_screen()
         self.setWindowIcon(make_app_icon(DARK))
 
         self._settings = QSettings("PagFlow", "PagFlow")
@@ -2526,15 +2599,64 @@ class App(StarField):
         self._center()
         self.entry_nome.setFocus()      # digitação imediata ao abrir
 
+    # ── encaixe na tela ─────────────────────────────────────────────────────
+    def _fit_to_screen(self) -> bool:
+        """Redimensiona a janela para o maior retângulo 4:3 que caiba na tela.
+
+        Usa a área útil do monitor (já sem a barra de tarefas) e desconta uma
+        folga para as bordas. Em monitores grandes o tamanho para no teto, para
+        o layout continuar idêntico em qualquer máquina. Devolve ``True`` quando
+        o tamanho realmente mudou.
+        """
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            largura, altura = self._TAMANHO_MAX
+        else:
+            area = screen.availableGeometry()
+            # A moldura (barra de título) fica fora do tamanho do cliente; sem
+            # descontá-la a janela passaria por baixo da barra de tarefas.
+            moldura_w = max(0, self.frameGeometry().width() - self.width())
+            moldura_h = max(0, self.frameGeometry().height() - self.height())
+            if not self.isVisible():
+                moldura_w = max(moldura_w, 8)
+                moldura_h = max(moldura_h, 32)
+            disponivel_w = max(400, area.width() - moldura_w - self._FOLGA_TELA)
+            disponivel_h = max(300, area.height() - moldura_h - self._FOLGA_TELA)
+            razao = self._PROPORCAO[0] / self._PROPORCAO[1]
+            largura = min(disponivel_w, int(disponivel_h * razao))
+            if largura > self._TAMANHO_MAX[0]:
+                largura = self._TAMANHO_MAX[0]
+            # múltiplo de 4 garante a proporção 4:3 exata em pixels inteiros
+            largura -= largura % self._PROPORCAO[0]
+            altura = largura * self._PROPORCAO[1] // self._PROPORCAO[0]
+        if (largura, altura) == (self.width(), self.height()):
+            return False
+        self.setFixedSize(largura, altura)
+        return True
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # Ao mover a janela para outro monitor, reencaixa mantendo 4:3.
+        handle = self.windowHandle()
+        if handle is not None and not self._screen_hooked:
+            handle.screenChanged.connect(lambda _screen: self._on_screen_changed())
+            self._screen_hooked = True
+        if self._fit_to_screen():
+            self._center()
+
+    def _on_screen_changed(self) -> None:
+        if self._fit_to_screen():
+            self._center()
+
     # ── layout ──────────────────────────────────────────────────────────────
     def _build(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 14, 20, 14)
+        root.setContentsMargins(20, 12, 20, 10)
         root.setSpacing(0)
 
         # ── faixa superior: crédito + alternador de tema ────────────────────
         top = QWidget(self)
-        top.setFixedHeight(26)
+        top.setFixedHeight(24)
         top_layout = QHBoxLayout(top)
         top_layout.setContentsMargins(2, 0, 0, 0)
         top_layout.setSpacing(0)
@@ -2550,11 +2672,11 @@ class App(StarField):
         top_layout.addWidget(self.toggle, 0, Qt.AlignmentFlag.AlignVCenter)
 
         root.addWidget(top)
-        root.addSpacing(10)
+        root.addSpacing(8)
 
         # ── cartão de marca ─────────────────────────────────────────────────
         self.header = Card(self, radius=12)
-        self.header.setFixedHeight(54)
+        self.header.setFixedHeight(52)
         header_layout = QHBoxLayout(self.header)
         header_layout.setContentsMargins(14, 0, 14, 0)
         header_layout.setSpacing(11)
@@ -2579,13 +2701,13 @@ class App(StarField):
         header_layout.addWidget(self.lbl_badge, 0, Qt.AlignmentFlag.AlignVCenter)
 
         root.addWidget(self.header)
-        root.addSpacing(14)
+        root.addSpacing(10)
 
         # ── seletor de telas: pílula mínima, centralizada ──────────────────
         self.switch = ViewSwitch(["Gerar Excel", "Envio de e-mails"], 268, self)
         self.switch.tab_changed.connect(self._switch_tab)
         root.addWidget(self.switch, 0, Qt.AlignmentFlag.AlignHCenter)
-        root.addSpacing(12)
+        root.addSpacing(10)
 
         # ── telas: troca por dissolução, as duas ocupam o mesmo lugar ──────
         self.stack = PageSwap(self)
@@ -2598,7 +2720,7 @@ class App(StarField):
         root.addWidget(self.stack, 1)
 
         # ── status (compartilhado) ─────────────────────────────────────────
-        root.addSpacing(12)
+        root.addSpacing(8)
         self.status = StatusBar(self)
         self.status.set_message("Pronto para uso.")
         root.addWidget(self.status)
@@ -2632,7 +2754,7 @@ class App(StarField):
         self._section(layout, "1", "Nome do arquivo de saída")
         self.entry_nome = self._entry("ex.: relatorio_outubro")
         layout.addWidget(self.entry_nome)
-        layout.addSpacing(18)
+        layout.addSpacing(14)
 
         # ── 2 · pasta de origem ─────────────────────────────────────────────
         self._section(layout, "2", "Pasta com os arquivos de entrada")
@@ -2646,19 +2768,19 @@ class App(StarField):
         origem_layout.addWidget(self.entry_pasta, 1)
         origem_layout.addWidget(self.btn_pasta, 0)
         layout.addWidget(row_origem)
-        layout.addSpacing(18)
+        layout.addSpacing(14)
 
         # ── 3 · separação das abas ──────────────────────────────────────────
         self._section(layout, "3", "Separação das abas")
         self.seg = SegmentedControl(["Marca", "LNeg", "Fornecedor", "Não Separar"], page)
         layout.addWidget(self.seg)
-        layout.addSpacing(18)
+        layout.addSpacing(14)
 
         # ── 4 · personalização ──────────────────────────────────────────────
         self._section(layout, "4", "Personalização")
         self.select = SelectField(["Verde", "Azul", "Roxo", "Vermelho"], "Azul", page)
         layout.addWidget(self.select)
-        layout.addSpacing(18)
+        layout.addSpacing(14)
 
         # ── 5 · destino ─────────────────────────────────────────────────────
         self._section(layout, "5", "Destino do arquivo final")
@@ -2729,12 +2851,17 @@ class App(StarField):
         return entry
 
     def _center(self) -> None:
-        screen = QGuiApplication.primaryScreen()
+        screen = self.screen() or QGuiApplication.primaryScreen()
         if screen is None:
             return
         area = screen.availableGeometry()
-        self.move(area.center().x() - self.width() // 2,
-                  area.center().y() - self.height() // 2)
+        # move() posiciona a moldura inteira, não só a área de cliente.
+        moldura_w = max(0, self.frameGeometry().width() - self.width())
+        moldura_h = max(0, self.frameGeometry().height() - self.height())
+        total_w = self.width() + moldura_w
+        total_h = self.height() + moldura_h
+        self.move(area.center().x() - total_w // 2,
+                  area.center().y() - total_h // 2)
 
     # ── troca de tela ───────────────────────────────────────────────────────
     def _switch_tab(self, index: int) -> None:

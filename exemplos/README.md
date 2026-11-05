@@ -45,6 +45,8 @@ comportamento normal desse formato.
 
 `funcoes.py` descarta colunas **por posição** e depois renomeia as 12 restantes.
 Por isso a ordem posicional não pode mudar, mesmo em colunas que são descartadas.
+A coluna de bloqueio (`BlP`/`BIP`) também é descartada do esquema fixo, mas é
+capturada pelo cabeçalho e devolvida ao final como **`Bloqueio`**.
 
 ### FBL1N (Tipo A) — 16 colunas no arquivo
 
@@ -66,8 +68,8 @@ O código descarta os índices **0, 12, 14 e 15**:
 | 11 | `Tipo` | `Tipo` |
 | 12 | `Nome` | descartada |
 | 13 | `Compensaç.` | `Compensaç.` |
-| 14 | `Moeda` | descartada |
-| 15 | `Centro` | descartada |
+| 14 | `BlP` | descartada do esquema fixo, mas vira `Bloqueio` |
+| 15 | `Moeda` | descartada |
 
 No FBL1N o valor é multiplicado por **-1** após o parse, então `1.500,00-`
 (crédito SAP) aparece como **+1500,00** no relatório.
@@ -87,7 +89,7 @@ posição** (os nomes do cabeçalho são ignorados):
 | 5 | `Referência` | `Referência` (5) |
 | 6 | `Vencimento` | `Vencimento` (6) |
 | 7 | `Tipo` | `Tipo` (7) |
-| 8 | `Moeda` | descartada |
+| 8 | `BIP` | descartada do esquema fixo, mas vira `Bloqueio` |
 | 9 | `Valor` | `Valor` (8) |
 | 10 | `Texto` | `Texto` (9) |
 | 11 | `Doc. Compensação` | `Doc. Compensação` (10) |
@@ -108,6 +110,11 @@ O conjunto foi montado para cobrir os caminhos reais do código:
   de abas por `Fornecedor`
 - **25 linhas finais**: 17 do FBL1N + 9 do REL_LOG − 1 duplicata
 - **2 linhas `KT`** (confissão de dívida) → destaque vermelho no Excel
+- **6 linhas com bloqueio** (`BlP`/`BIP` = `B`) → exercita a coluna `Bloqueio`
+  e os avisos de valor bloqueado no e-mail
+
+> Na coluna de bloqueio, `B` = bloqueado; `S` = sem bloqueio (linhas `RE`);
+> os demais tipos ficam em branco, como no extrato real.
 - **3 linhas `RF`** (nota fiscal da seguradora) → reembolsos
 - **1 linha `KL`** (fatura) → propositalmente descartada pelo filtro de tipos
 - **1 referência repetida** entre os dois relatórios (`CTE-2025-1042`) →

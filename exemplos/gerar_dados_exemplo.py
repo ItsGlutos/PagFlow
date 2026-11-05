@@ -30,6 +30,8 @@ CNPJ = "12.345.678/0001-90"
 #   1 Empresa | 2 Fornecedor | 3 LNeg | 4 Referência | 5 Nº documento
 #   6 Data doc. | 7 Doc. Compensação | 8 Valor | 9 Vencimento | 10 Texto
 #   11 Tipo | 13 Compensaç.
+# A coluna 14 (BlP) também é descartada do esquema fixo, mas o PagFlow a
+# captura pelo cabeçalho e a devolve ao final como "Bloqueio".
 # ──────────────────────────────────────────────────────────────────────────────
 CABECALHO_FBL1N = [
     "Seq",                # 0  → descartada
@@ -46,8 +48,8 @@ CABECALHO_FBL1N = [
     "Tipo",               # 11
     "Nome",               # 12 → descartada (mas é o que identifica o Tipo A)
     "Compensaç.",         # 13
-    "Moeda",              # 14 → descartada
-    "Centro",             # 15 → descartada
+    "BlP",                # 14 → descartada do esquema fixo, mas capturada
+    "Moeda",              # 15 → descartada
 ]
 
 # (Empresa, Fornecedor, LNeg, Referência, Nº doc, Data doc,
@@ -81,12 +83,21 @@ LINHAS_FBL1N = [
     ("Custos SC", 102450, 2000, "RF-2025-0310", 1900012415, "17.10.2025", 5100000160, "890,25-", "31.10.2025", "REEMBOLSO SEGURO - SINISTRO 0310", "RF", "30.10.2025"),
 ]
 
+# Referências que chegam com BlP = "B" (documento bloqueado). As demais linhas
+# RE ficam com "S" (sem bloqueio) e as não-RE ficam em branco, como no SAP.
+BLOQUEIOS_FBL1N = {
+    "CTE-2025-1043",   # Santa Cruz
+    "CTE-2025-2020",   # Panpharma
+    "CTE-2025-1071",   # Custos SC
+}
+
 # ──────────────────────────────────────────────────────────────────────────────
 # REL_LOG — 16 colunas no arquivo; o código descarta 15, 14, 13 e 8.
 # Depois do descarte, as 12 restantes são renomeadas POR POSIÇÃO:
 #   0 Empresa | 1 LNeg | 2 Fornecedor | 3 Nº documento | 4 Data doc.
 #   5 Referência | 6 Vencimento | 7 Tipo | 9 Valor | 10 Texto
 #   11 Doc. Compensação | 12 Compensaç.
+# A coluna 8 (BIP) é descartada do esquema fixo, mas capturada pelo cabeçalho.
 # ──────────────────────────────────────────────────────────────────────────────
 CABECALHO_REL_LOG = [
     "Empresa",            # 0
@@ -97,7 +108,7 @@ CABECALHO_REL_LOG = [
     "Referência",         # 5
     "Vencimento",         # 6
     "Tipo",               # 7
-    "Moeda",              # 8  → descartada
+    "BIP",                # 8  → descartada do esquema fixo, mas capturada
     "Valor",              # 9
     "Texto",              # 10
     "Doc. Compensação",   # 11
@@ -126,6 +137,14 @@ LINHAS_REL_LOG = [
     # Desconto/abatimento registrado no log → valor negativo (sinal no fim)
     ("Custos SC", 3001, 101234, 1900012478, "24.10.2025", "CTE-2025-1074", "31.10.2025", "RE", "135,00-", "DESCONTO AVARIA CTE 1074", "", ""),
 ]
+
+# Referências que chegam com BIP = "B" no log. O KT (CFD) fica sem bloqueio,
+# como no relatório real, para separar os dois avisos do e-mail.
+BLOQUEIOS_REL_LOG = {
+    "CTE-2025-1045",
+    "CTE-2025-2013",
+    "CTE-2025-1073",
+}
 
 
 def escrever_xls(caminho: Path, preambulo: list[str], cabecalho: list[str], linhas: list[list]) -> None:
@@ -162,11 +181,12 @@ def gerar() -> list[Path]:
         f"Fornecedor: 101234 / 101987 / 102450 - {TRANSPORTADORA}",
     ]
 
-    # FBL1N: insere o sequencial (0), 'Nome' (12) e as colunas 14/15 no fim
+    # FBL1N: mantém o sequencial (0), 'Nome' (12) e as colunas 14/15 no fim
     linhas_fbl1n = [
         [seq, empresa, fornecedor, lneg, referencia, documento, data_doc,
          doc_comp, valor, vencimento, texto, tipo, TRANSPORTADORA, compensacao,
-         "BRL", "SC01"]
+         "B" if referencia in BLOQUEIOS_FBL1N else ("S" if tipo == "RE" else ""),
+         "BRL"]
         for seq, (empresa, fornecedor, lneg, referencia, documento, data_doc,
                   doc_comp, valor, vencimento, texto, tipo, compensacao)
         in enumerate(LINHAS_FBL1N, start=1)
@@ -174,7 +194,10 @@ def gerar() -> list[Path]:
 
     linhas_rel_log = [
         [empresa, lneg, fornecedor, documento, data_doc, referencia, vencimento,
-         tipo, "BRL", valor, texto, doc_comp, compensacao, "341", data_doc, "TED"]
+         tipo,
+         "B" if referencia in BLOQUEIOS_REL_LOG else ("S" if tipo == "RE" else ""),
+         valor, texto,
+         doc_comp, compensacao, "341", data_doc, "TED"]
         for (empresa, lneg, fornecedor, documento, data_doc, referencia, vencimento,
              tipo, valor, texto, doc_comp, compensacao) in LINHAS_REL_LOG
     ]
