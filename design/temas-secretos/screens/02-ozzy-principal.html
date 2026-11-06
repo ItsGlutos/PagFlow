@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=1280">
+  <title>Ozzy · Tela principal · PagFlow</title>
+  <link rel="stylesheet" href="_shared/fonts.css">
+  <link rel="stylesheet" href="_shared/base.css">
+  
+  <link rel="stylesheet" href="ozzy.css">
+</head>
+<body class="theme-ozzy">
+  <div class="artboard">
+    
+    <div class="sky"></div>
+    <div class="decor">
+      <span class="orb o1"></span>
+      <span class="orb o2"></span>
+      <span class="orb o3"></span>
+      <svg class="bat-bg" viewBox="0 0 240 90" aria-hidden="true">
+        <path d="M120 35c-8-11-21-17-39-16 6 9 6 20-2 29 10-3 21-1 31 7 4-7 7-11 10-13 3 2 6 6 10 13 10-8 21-10 31-7-8-9-8-20-2-29-18-1-31 5-39 16Z"/>
+        <path d="M112 30c-2-8-5-14-10-20 6 0 11 3 14 8 1-6 2-11 4-15 2 4 3 9 4 15 3-5 8-8 14-8-5 6-8 12-10 20Z"/>
+      </svg>
+    </div>
+    
+    
+    <div class="app">
+      <header class="topbar">
+        <span class="meta">FEITO POR GUSTAVO PINHEIRO</span>
+        <div class="topbar-actions">
+          <button class="top-icon" type="button" title="Configurações" aria-label="Configurações"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+          <div class="theme-toggle is-dark" role="img" aria-label="Alternador de tema Ozzy"><span class="knob"></span><svg class="t-icon moon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.2 14.6A8.7 8.7 0 0 1 9.4 3.8 8.7 8.7 0 1 0 20.2 14.6Z"/></svg><svg class="t-icon sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3.4"/><path d="M12 2.2v2.1M12 19.7v2.1M2.2 12h2.1M19.7 12h2.1M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"/></svg></div>
+        </div>
+      </header>
+
+      <section class="brand-card" aria-label="Identidade do PagFlow">
+        <div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.2 2 4.4 14.1h5.5L9 22l8.9-12.2h-5.5z"/></svg></div>
+        <div class="brand-copy">
+          <h1 class="brand-title">PAGFLOW <span class="suffix">OZZY</span></h1>
+          <p class="brand-sub">Consolidação de pagamentos SAP</p>
+        </div>
+        <span class="badge">XLS → XLSX</span>
+      </section>
+
+      <nav class="view-switch" aria-label="Telas do PagFlow">
+        <button type="button" class="active">Gerar Excel</button>
+        <button type="button">Envio de e-mails</button>
+      </nav>
+
+      <main class="form">
+        <section class="step">
+          <div class="step-row">
+            <span class="chip">1</span>
+            <span class="step-title">Nome do arquivo de saída</span>
+          </div>
+          <div class="step-body">
+            <div class="field"><span class="value">blizzard_of_ozz_relatorio_outubro</span></div>
+          </div>
+        </section>
+
+        <section class="step">
+          <div class="step-row">
+            <span class="chip">2</span>
+            <span class="step-title">Pasta com os arquivos de entrada</span>
+          </div>
+          <div class="step-body">
+            <div class="row">
+              <div class="field"><span class="value">C:\OZZY_STAGE_DATA\SAP_PAYMENTS_1996\OCTOBER_PARANOID</span></div>
+              <button class="icon-field" type="button" title="Selecionar pasta de entrada" aria-label="Selecionar pasta de entrada"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.2a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8.6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
+            </div>
+          </div>
+        </section>
+
+        <section class="step">
+          <div class="step-row">
+            <span class="chip">3</span>
+            <span class="step-title">Separação das abas</span>
+          </div>
+          <div class="step-body">
+            <div class="segmented" role="group" aria-label="Separação das abas">
+              <button class="seg" type="button">Marca</button>
+              <button class="seg" type="button">LNeg</button>
+              <button class="seg" type="button">Fornecedor</button>
+              <button class="seg active" type="button">Não Separar</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="step">
+          <div class="step-row">
+            <span class="chip">4</span>
+            <span class="step-title">Personalização</span>
+          </div>
+          <div class="step-body">
+            <div class="select">
+              <span>Ozzy Osbourne (No More Tours — Preto, Vermelho &amp; Amarelo)</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+          </div>
+        </section>
+
+        <section class="step">
+          <div class="step-row">
+            <span class="chip">5</span>
+            <span class="step-title">Destino do arquivo final</span>
+          </div>
+          <div class="step-body">
+            <div class="row">
+              <div class="field"><span class="value">C:\OZZY_STAGE_DATA\CONSOLIDATED_FINAL_EXCELS</span></div>
+              <button class="icon-field" type="button" title="Selecionar pasta de destino" aria-label="Selecionar pasta de destino"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.2a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8.6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
+            </div>
+          </div>
+        </section>
+
+        <div class="form-spacer"></div>
+        <div class="divider"></div>
+
+        <div class="actions">
+          <button class="btn secondary" type="button">Limpar campos</button>
+          <span class="spacer"></span>
+          <button class="btn primary" type="button"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.2v13.6L19 12z"/></svg> Gerar Excel</button>
+        </div>
+      </main>
+
+      <div class="statusbar" role="status">
+        <span class="status-dot"></span>
+        <span>Pronto para uso.</span>
+      </div>
+    </div>
+    
+  </div>
+</body>
+</html>

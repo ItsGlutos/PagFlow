@@ -1,0 +1,147 @@
+@font-face {
+  font-family: "Outfit";
+  src: url("../../assets/fonts/Outfit-400.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Outfit";
+  src: url("../../assets/fonts/Outfit-600.ttf") format("truetype");
+  font-weight: 600 700;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Outfit";
+  src: url("../../assets/fonts/Outfit-800.ttf") format("truetype");
+  font-weight: 800 900;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("../../assets/fonts/SpaceGrotesk-400.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("../../assets/fonts/SpaceGrotesk-500.ttf") format("truetype");
+  font-weight: 500 600;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("../../assets/fonts/SpaceGrotesk-700.ttf") format("truetype");
+  font-weight: 700 900;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Anton";
+  src: url("../../assets/fonts/Anton-400.ttf") format("truetype");
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../../assets/fonts/JetBrainsMono-400.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../../assets/fonts/JetBrainsMono-700.ttf") format("truetype");
+  font-weight: 700 900;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Playfair Display";
+  src: url("../../assets/fonts/PlayfairDisplay-400.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Playfair Display";
+  src: url("../../assets/fonts/PlayfairDisplay-600.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Playfair Display";
+  src: url("../../assets/fonts/PlayfairDisplay-700.ttf") format("truetype");
+  font-weight: 700 900;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Playfair Display";
+  src: url("../../assets/fonts/PlayfairDisplay-400-italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: block;
+}
+@font-face {
+  font-family: "Playfair Display";
+  src: url("../../assets/fonts/PlayfairDisplay-600-italic.ttf") format("truetype");
+  font-weight: 600 900;
+  font-style: italic;
+  font-display: block;
+}
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("../../assets/fonts/PlusJakartaSans-400.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("../../assets/fonts/PlusJakartaSans-500.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("../../assets/fonts/PlusJakartaSans-600.ttf") format("truetype");
+  font-weight: 600 700;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("../../assets/fonts/PlusJakartaSans-700.ttf") format("truetype");
+  font-weight: 700 900;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Sora";
+  src: url("../../assets/fonts/Sora-400.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Sora";
+  src: url("../../assets/fonts/Sora-600.ttf") format("truetype");
+  font-weight: 600 700;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Sora";
+  src: url("../../assets/fonts/Sora-700.ttf") format("truetype");
+  font-weight: 700 900;
+  font-style: normal;
+  font-display: block;
+}
