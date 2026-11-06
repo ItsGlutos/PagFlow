@@ -19,6 +19,9 @@ a = Analysis(
         'win32com.client',
         'pythoncom',
         'win32timezone',
+        # Exportação rápida (import lazy em funcoes.py, com fallback para
+        # openpyxl quando o pacote não está presente).
+        'xlsxwriter',
     ],
     hookspath=[],
     hooksconfig={},

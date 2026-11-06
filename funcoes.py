@@ -1,6 +1,43 @@
 from pathlib import Path
 
 
+# Paletas baseadas nos estilos nativos do Excel "Formatar como Tabela"
+# (TableStyleMedium) com conformidade WCAG AA (contraste ≥ 4.5:1).
+# Estrutura: (cabeçalho, linha ímpar, linha par)
+#   • Cabeçalho: cor sólida escura + texto branco (#FFFFFF) → contraste alto
+#   • Linhas: alternância clara/branca + texto preto (#000000) → máximo legível
+#
+#  Referência Excel:
+#   Azul    → TableStyleMedium2  (#4472C4 / #D9E1F2 / #FFFFFF)
+#   Verde   → TableStyleMedium7  (#70AD47 / #E2EFDA / #FFFFFF)
+#   Roxo    → TableStyleMedium13 (#7030A0 / #E4DFEC / #FFFFFF)
+#   Vermelho→ TableStyleMedium10 (#C00000 / #FFC7CE / #FFFFFF)
+PALETAS_RELATORIO = {
+    'Azul':     ('4472C4', 'D9E1F2', 'FFFFFF'),
+    'Verde':    ('375623', 'E2EFDA', 'FFFFFF'),
+    'Roxo':     ('7030A0', 'E4DFEC', 'FFFFFF'),
+    'Vermelho': ('C00000', 'FFC7CE', 'FFFFFF'),
+}
+
+# Mapeia o label da UI para o nome real da coluna no DataFrame
+MAPA_COLUNAS_RELATORIO = {
+    'Marca':      'Empresa',
+    'LNeg':       'LNeg',
+    'Fornecedor': 'Fornecedor',
+}
+
+
+def _montar_abas(df_final, separar):
+    """Monta a lista de (nome_aba, DataFrame) conforme a separação escolhida."""
+    if separar == 'Não Separar':
+        return [('Dados', df_final)]
+    coluna = MAPA_COLUNAS_RELATORIO[separar]
+    return [
+        (str(valor)[:31], df_final[df_final[coluna] == valor])
+        for valor in sorted(df_final[coluna].dropna().unique())
+    ]
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # FUNÇÃO: detectar_relat
 # Objetivo: Abrir o arquivo .xls (salvo como texto separado por tab, UTF-16)
@@ -339,8 +376,9 @@ def processar_arquivo(caminho_arquivo):
 #
 # Retorna: caminho_arquivo (Path) do .xlsx gerado
 # ──────────────────────────────────────────────────────────────────────────────
-def exportar_excel(df_final, separar, destino, nome, cor='Azul'):
+def _exportar_excel_openpyxl(df_final, separar, destino, nome, cor='Azul'):
     import pandas as pd
+    from copy import copy
     from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
     import datetime
@@ -348,26 +386,10 @@ def exportar_excel(df_final, separar, destino, nome, cor='Azul'):
     import shutil
     import os
 
-    # [gerado] Paletas baseadas nos estilos nativos do Excel "Formatar como Tabela"
-    # (TableStyleMedium) com conformidade WCAG AA (contraste ≥ 4.5:1).
-    # Estrutura: (cabeçalho, linha ímpar, linha par)
-    #   • Cabeçalho: cor sólida escura + texto branco (#FFFFFF) → contraste alto
-    #   • Linhas: alternância clara/branca + texto preto (#000000) → máximo legível
-    #
-    #  Referência Excel:
-    #   Azul    → TableStyleMedium2  (#4472C4 / #D9E1F2 / #FFFFFF)
-    #   Verde   → TableStyleMedium7  (#70AD47 / #E2EFDA / #FFFFFF)
-    #   Roxo    → TableStyleMedium13 (#7030A0 / #E4DFEC / #FFFFFF)
-    #   Vermelho→ TableStyleMedium10 (#C00000 / #FFC7CE / #FFFFFF)
-    paletas = {
-        'Azul':     ('4472C4', 'D9E1F2', 'FFFFFF'),
-        'Verde':    ('375623', 'E2EFDA', 'FFFFFF'),
-        'Roxo':     ('7030A0', 'E4DFEC', 'FFFFFF'),
-        'Vermelho': ('C00000', 'FFC7CE', 'FFFFFF'),
-    }
-
     # [gerado] Seleciona a paleta escolhida; cai em Azul se a cor não for reconhecida
-    header_hex, row1_hex, row2_hex = paletas.get(cor, paletas['Azul'])
+    header_hex, row1_hex, row2_hex = PALETAS_RELATORIO.get(
+        cor, PALETAS_RELATORIO['Azul']
+    )
 
     fill_header = PatternFill('solid', fgColor=header_hex)
     fill_row1   = PatternFill('solid', fgColor=row1_hex)
@@ -392,14 +414,6 @@ def exportar_excel(df_final, separar, destino, nome, cor='Azul'):
 
     # [gerado] Índice posicional da coluna 'Valor' no DataFrame (base 1 para o Excel)
     col_valor_idx = list(df_final.columns).index('Valor') + 1
-    col_tipo_idx  = list(df_final.columns).index('Tipo')
-
-    # [gerado] Mapeia o label da UI para o nome real da coluna no DataFrame
-    mapa_colunas = {
-        'Marca':      'Empresa',
-        'LNeg':       'LNeg',
-        'Fornecedor': 'Fornecedor',
-    }
 
     # [gerado] Garante que o destino seja um objeto Path
     caminho_arquivo = Path(destino) / f'{nome}.xlsx'
@@ -410,14 +424,38 @@ def exportar_excel(df_final, separar, destino, nome, cor='Azul'):
 
     # [gerado] Monta a lista de (nome_aba, DataFrame) para iterar de forma uniforme
     # independente de estar separando por coluna ou não
-    if separar == 'Não Separar':
-        abas = [('Dados', df_final)]
-    else:
-        coluna = mapa_colunas[separar]
-        abas = [
-            (str(valor)[:31], df_final[df_final[coluna] == valor])
-            for valor in sorted(df_final[coluna].dropna().unique())
-        ]
+    abas = _montar_abas(df_final, separar)
+
+    # [gerado] Cache de estilos: a primeira célula de cada variante registra o
+    # estilo pela API pública do openpyxl; as demais apenas copiam o StyleArray
+    # já registrado. O resultado visual é idêntico, mas evita que o openpyxl
+    # recalcule hash/índice de fonte, fundo, borda e alinhamento em cada célula.
+    estilos = {}
+
+    def aplicar_estilo(celula, chave, preencher, fonte, alinhamento, numero=None):
+        estilo = estilos.get(chave)
+        if estilo is None:
+            celula.fill = preencher
+            celula.font = fonte
+            celula.border = borda_fina
+            if alinhamento is not None:
+                celula.alignment = alinhamento
+            if numero is not None:
+                celula.number_format = numero
+            # Se uma versão futura do openpyxl não expuser o StyleArray,
+            # marca a variante para continuar pela via pública (sem quebrar).
+            interno = getattr(celula, '_style', None)
+            estilos[chave] = copy(interno) if interno is not None else False
+        elif estilo is False:
+            celula.fill = preencher
+            celula.font = fonte
+            celula.border = borda_fina
+            if alinhamento is not None:
+                celula.alignment = alinhamento
+            if numero is not None:
+                celula.number_format = numero
+        else:
+            celula._style = copy(estilo)
 
     # [gerado] Passamos str(caminho_arquivo) em vez do objeto Path.
     # Quando o pandas recebe um Path, em algumas versões ele cria um file-handle 
@@ -438,76 +476,112 @@ def exportar_excel(df_final, separar, destino, nome, cor='Azul'):
             ws = writer.sheets[nome_aba]
             n_cols = len(df_aba.columns)
 
+            # [gerado] A largura de cada coluna é medida na mesma passada em que
+            # as células recebem estilo, evitando uma segunda varredura completa.
+            larguras = [0] * (n_cols + 1)
+
             # ── Formatar cabeçalho (linha 1) ─────────────────────────────────
             for col_idx in range(1, n_cols + 1):
                 cell = ws.cell(row=1, column=col_idx)
-                cell.fill      = fill_header
-                cell.font      = font_header
-                cell.alignment = align_center
-                cell.border    = borda_fina
+                aplicar_estilo(
+                    cell, 'cabecalho', fill_header, font_header, align_center
+                )
+                comprimento = len(str(cell.value or ''))
+                if comprimento > larguras[col_idx]:
+                    larguras[col_idx] = comprimento
+
+            # [gerado] Máscara KT calculada de uma vez (antes era uma conversão
+            # de string por linha).
+            if len(df_aba):
+                mascara_kt = (
+                    df_aba['Tipo']
+                    .astype(str).str.strip().str.upper().eq('KT')
+                    .to_numpy()
+                )
+            else:
+                mascara_kt = ()
 
             # ── Formatar linhas de dados (a partir da linha 2) ────────────────
-            for row_idx, row_data in enumerate(df_aba.itertuples(index=False), start=2):
+            subtotal_row = ws.max_row + 1
 
-                # [gerado] Verifica se o tipo da linha é KT para pintar de vermelho
-                tipo_valor = str(getattr(row_data, 'Tipo', ''))
-                is_kt = tipo_valor.strip().upper() == 'KT'
+            if subtotal_row > 2:
+                linhas = ws.iter_rows(
+                    min_row=2, max_row=subtotal_row - 1, max_col=n_cols
+                )
+                for row_idx, row_cells in enumerate(linhas, start=2):
 
-                # [gerado] Zebrado: linhas ímpares e pares recebem tons diferentes
-                fill_linha = fill_row1 if row_idx % 2 != 0 else fill_row2
+                    # [gerado] Verifica se o tipo da linha é KT para pintar de vermelho
+                    is_kt = bool(mascara_kt[row_idx - 2])
 
-                for col_idx in range(1, n_cols + 1):
-                    cell = ws.cell(row=row_idx, column=col_idx)
-                    cell.border = borda_fina
-
-                    if is_kt and col_idx == col_valor_idx:
-                        # [gerado] Célula de Valor em linha KT: fundo vermelho + fonte branca
-                        cell.fill = fill_kt
-                        cell.font = font_kt
+                    # [gerado] Zebrado: linhas ímpares e pares recebem tons diferentes
+                    if row_idx % 2 != 0:
+                        fill_linha, sufixo_linha = fill_row1, 'impar'
                     else:
-                        cell.fill = fill_linha
-                        cell.font = font_normal
+                        fill_linha, sufixo_linha = fill_row2, 'par'
 
-                    # [gerado] Alinhamento por tipo de dado
-                    if col_idx == col_valor_idx:
-                        cell.alignment = align_right
-                    else:
-                        cell.alignment = align_left
-                        
-                    # [gerado] Força a formatação visual brasileira nas datas (dd/mm/yyyy)
-                    if isinstance(cell.value, datetime.datetime):
-                        cell.number_format = 'dd/mm/yyyy'
+                    for col_idx, cell in enumerate(row_cells, start=1):
+                        if col_idx == col_valor_idx:
+                            if is_kt:
+                                # [gerado] Célula de Valor em linha KT: fundo vermelho + fonte branca
+                                aplicar_estilo(
+                                    cell, f'kt_{sufixo_linha}',
+                                    fill_kt, font_kt, align_right,
+                                )
+                            else:
+                                aplicar_estilo(
+                                    cell, f'dados_{sufixo_linha}_valor',
+                                    fill_linha, font_normal, align_right,
+                                )
+                        else:
+                            aplicar_estilo(
+                                cell, f'dados_{sufixo_linha}_texto',
+                                fill_linha, font_normal, align_left,
+                            )
+
+                        # [gerado] Força a formatação visual brasileira nas datas (dd/mm/yyyy)
+                        if isinstance(cell.value, datetime.datetime):
+                            cell.number_format = 'dd/mm/yyyy'
+
+                        comprimento = len(str(cell.value or ''))
+                        if comprimento > larguras[col_idx]:
+                            larguras[col_idx] = comprimento
 
             # ── Linha de subtotal de Valor ────────────────────────────────────
-            subtotal_row = ws.max_row + 1
             lbl_col = col_valor_idx - 1 if col_valor_idx > 1 else 1  # coluna ao lado esquerdo
 
             for col_idx in range(1, n_cols + 1):
                 cell = ws.cell(row=subtotal_row, column=col_idx)
-                cell.fill   = fill_header
-                cell.border = borda_fina
-                
+
                 if col_idx == lbl_col:
-                    cell.value     = 'SUBTOTAL'
-                    cell.font      = font_subtotal
-                    cell.alignment = align_right
+                    cell.value = 'SUBTOTAL'
+                    aplicar_estilo(
+                        cell, 'subtotal_rotulo',
+                        fill_header, font_subtotal, align_right,
+                    )
                 elif col_idx == col_valor_idx:
                     cell.value = f'=SUM({get_column_letter(col_valor_idx)}2:' \
                                  f'{get_column_letter(col_valor_idx)}{subtotal_row - 1})'
-                    cell.font      = font_subtotal
-                    cell.alignment = align_right
-                    cell.number_format = '#,##0.00'
+                    aplicar_estilo(
+                        cell, 'subtotal_valor',
+                        fill_header, font_subtotal, align_right,
+                        numero='#,##0.00',
+                    )
                 else:
-                    cell.font      = font_subtotal
+                    aplicar_estilo(
+                        cell, 'subtotal_outro',
+                        fill_header, font_subtotal, None,
+                    )
+
+                comprimento = len(str(cell.value or ''))
+                if comprimento > larguras[col_idx]:
+                    larguras[col_idx] = comprimento
 
             # ── Ajuste automático da largura das colunas ──────────────────────
             for col_idx in range(1, n_cols + 1):
                 col_letter = get_column_letter(col_idx)
-                max_len = max(
-                    len(str(ws.cell(row=r, column=col_idx).value or ''))
-                    for r in range(1, subtotal_row + 1)
+                ws.column_dimensions[col_letter].width = min(
+                    larguras[col_idx] + 4, 40
                 )
-                ws.column_dimensions[col_letter].width = min(max_len + 4, 40)
 
     # [gerado] Move atomicamente o temporário completo para o destino final
     # Isso faz o arquivo "nascer" na pasta destino no exato milissegundo em que 
@@ -515,3 +589,369 @@ def exportar_excel(df_final, separar, destino, nome, cor='Azul'):
     shutil.move(temp_path, str(caminho_arquivo))
 
     return caminho_arquivo
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# FUNÇÃO: _exportar_excel_xlsxwriter  [gerado]
+# Objetivo: Caminho rápido opcional para a mesma exportação. O XlsxWriter é
+#           bem mais veloz que o openpyxl em volumes grandes; o wrapper público
+#           só o usa quando o pacote está instalado e consegue concluir.
+# ──────────────────────────────────────────────────────────────────────────────
+class _ExportacaoRapidaIndisponivel(Exception):
+    """Dado fora do conjunto suportado pelo caminho rápido."""
+
+
+def _escrever_celula(ws, linha, coluna, valor, formato, formato_data):
+    """Grava uma célula preservando o tipo do valor.
+
+    O openpyxl (caminho padrão) decide o tipo sozinho; aqui a decisão é
+    explícita para que números, textos, booleanos, datas e vazios cheguem ao
+    arquivo exatamente como chegariam pelo pandas/openpyxl. Os tipos mais
+    comuns (texto, inteiro, float e data) são testados primeiro, sem passar
+    pelo ``pd.isna``, que é caro quando repetido em cada célula.
+    """
+    import datetime
+    import math
+
+    import numpy as np
+    import pandas as pd
+
+    if valor is None:
+        ws.write_blank(linha, coluna, None, formato)
+        return
+    if isinstance(valor, str):
+        # O openpyxl transforma texto que começa com "=" em fórmula; repetimos
+        # a mesma regra para o arquivo ficar idêntico ao caminho antigo.
+        if len(valor) > 1 and valor.startswith('='):
+            ws.write_formula(linha, coluna, valor, formato)
+        else:
+            ws.write_string(linha, coluna, valor, formato)
+        return
+    if isinstance(valor, bool):
+        ws.write_boolean(linha, coluna, valor, formato)
+        return
+    if isinstance(valor, np.bool_):
+        ws.write_boolean(linha, coluna, bool(valor), formato)
+        return
+    if isinstance(valor, np.integer):
+        ws.write_number(linha, coluna, int(valor), formato)
+        return
+    if isinstance(valor, np.floating):
+        numero = float(valor)
+        if math.isnan(numero):
+            ws.write_blank(linha, coluna, None, formato)
+        else:
+            ws.write_number(linha, coluna, numero, formato)
+        return
+    if isinstance(valor, int):
+        ws.write_number(linha, coluna, valor, formato)
+        return
+    if isinstance(valor, float):
+        if math.isnan(valor):
+            ws.write_blank(linha, coluna, None, formato)
+        else:
+            ws.write_number(linha, coluna, valor, formato)
+        return
+
+    # NaT é subclasse de datetime, mas representa vazio.
+    if valor is pd.NaT:
+        ws.write_blank(linha, coluna, None, formato)
+        return
+
+    if isinstance(valor, (pd.Timestamp, datetime.datetime, datetime.date)):
+        if getattr(valor, 'tzinfo', None) is not None:
+            raise _ExportacaoRapidaIndisponivel('data com fuso horário')
+        ws.write_datetime(linha, coluna, valor, formato_data)
+        return
+
+    # time/timedelta têm regras de formato próprias no openpyxl; nesses casos
+    # o caminho rápido delega para o caminho seguro.
+    if isinstance(valor, (datetime.time, datetime.timedelta, pd.Timedelta)):
+        raise _ExportacaoRapidaIndisponivel('hora/intervalo de tempo')
+
+    # pd.NA, NaN de tipos exóticos e escalares não previstos.
+    try:
+        vazio = pd.isna(valor)
+    except (TypeError, ValueError):
+        vazio = False
+    if isinstance(vazio, bool) and vazio:
+        ws.write_blank(linha, coluna, None, formato)
+        return
+
+    # Escalares do NumPy que não caíram nos testes acima.
+    if hasattr(valor, 'item'):
+        convertido = valor.item()
+        if type(convertido) is not type(valor):
+            _escrever_celula(
+                ws, linha, coluna, convertido, formato, formato_data
+            )
+            return
+
+    raise _ExportacaoRapidaIndisponivel(f'tipo não suportado: {type(valor)}')
+
+
+def _maior_comprimento_coluna(serie) -> int:
+    """Maior ``len(str(valor or ''))`` da coluna, como a medição antiga.
+
+    Datas são medidas pelo ``str`` do objeto (ex.: ``2025-10-02 00:00:00``),
+    e não pelo formato curto do ``astype(str)``; por isso a coluna de data usa
+    ``map``. Para os demais tipos o cálculo vetorizado é equivalente.
+    """
+    import pandas as pd
+    from pandas.api.types import is_datetime64_any_dtype
+
+    if len(serie) == 0:
+        return 0
+
+    if (
+        is_datetime64_any_dtype(serie.dtype)
+        or serie.dtype == object
+        or isinstance(serie.dtype, pd.CategoricalDtype)
+    ):
+        validos = serie.notna()
+        comprimentos = serie.map(lambda valor: len(str(valor or '')))
+        comprimentos = comprimentos.where(validos, 0)
+        return int(comprimentos.max())
+
+    comprimentos = serie.astype(str).str.len()
+    vazio = serie.isna()
+    try:
+        zero = serie.eq(0) | serie.eq(False)
+    except (TypeError, ValueError):
+        zero = False
+    if hasattr(zero, "fillna"):
+        zero = zero.fillna(False)
+    comprimentos = comprimentos.mask(vazio | zero, 0)
+    return int(comprimentos.max()) if len(comprimentos) else 0
+
+
+def _exportar_excel_xlsxwriter(df_final, separar, destino, nome, cor='Azul'):
+    import datetime
+    import os
+    import shutil
+    import tempfile
+
+    import pandas as pd
+    import xlsxwriter
+    from xlsxwriter.utility import xl_col_to_name
+
+    header_hex, row1_hex, row2_hex = PALETAS_RELATORIO.get(
+        cor, PALETAS_RELATORIO['Azul']
+    )
+
+    abas = _montar_abas(df_final, separar)
+    colunas = list(df_final.columns)
+    col_valor_idx = colunas.index('Valor')  # base 0 no XlsxWriter
+
+    caminho_arquivo = Path(destino) / f'{nome}.xlsx'
+    fd, temp_path = tempfile.mkstemp(suffix='.xlsx')
+    os.close(fd)
+
+    # Base comum a todas as células de dados, igual aos Font/Alignment/Border
+    # do caminho openpyxl.
+    base = {
+        'font_name': 'Calibri', 'font_size': 10, 'font_color': '#000000',
+        'border': 1, 'border_color': '#FFFFFF', 'valign': 'vcenter',
+    }
+
+    wb = None
+
+    def novo_formato(**extra):
+        return wb.add_format({**base, **extra})
+
+    try:
+        # in_memory evita arquivos temporários internos do XlsxWriter e é um
+        # pouco mais rápido; o custo de memória é semelhante ao do openpyxl.
+        wb = xlsxwriter.Workbook(str(temp_path), {'in_memory': True})
+
+        formato_cabecalho = wb.add_format({
+            'font_name': 'Calibri', 'font_size': 11, 'bold': True,
+            'font_color': '#FFFFFF', 'bg_color': '#' + header_hex,
+            'pattern': 1, 'border': 1, 'border_color': '#FFFFFF',
+            'align': 'center', 'valign': 'vcenter',
+        })
+        formato_kt = wb.add_format({
+            'font_name': 'Calibri', 'font_size': 10, 'bold': True,
+            'font_color': '#FFFFFF', 'bg_color': '#FF0000', 'pattern': 1,
+            'border': 1, 'border_color': '#FFFFFF',
+            'align': 'right', 'valign': 'vcenter',
+        })
+        formato_kt_data = wb.add_format({
+            'font_name': 'Calibri', 'font_size': 10, 'bold': True,
+            'font_color': '#FFFFFF', 'bg_color': '#FF0000', 'pattern': 1,
+            'border': 1, 'border_color': '#FFFFFF',
+            'align': 'right', 'valign': 'vcenter',
+            'num_format': 'dd/mm/yyyy',
+        })
+        formato_subtotal_rotulo = wb.add_format({
+            'font_name': 'Calibri', 'font_size': 10, 'bold': True,
+            'font_color': '#FFFFFF', 'bg_color': '#' + header_hex,
+            'pattern': 1, 'border': 1, 'border_color': '#FFFFFF',
+            'align': 'right', 'valign': 'vcenter',
+        })
+        formato_subtotal_valor = wb.add_format({
+            'font_name': 'Calibri', 'font_size': 10, 'bold': True,
+            'font_color': '#FFFFFF', 'bg_color': '#' + header_hex,
+            'pattern': 1, 'border': 1, 'border_color': '#FFFFFF',
+            'align': 'right', 'valign': 'vcenter',
+            'num_format': '#,##0.00',
+        })
+        formato_subtotal_outro = wb.add_format({
+            'font_name': 'Calibri', 'font_size': 10, 'bold': True,
+            'font_color': '#FFFFFF', 'bg_color': '#' + header_hex,
+            'pattern': 1, 'border': 1, 'border_color': '#FFFFFF',
+        })
+
+        # [True = linha de Excel ímpar (tom row1); False = par (row2)]
+        formatos_esq = {
+            True: novo_formato(bg_color='#' + row1_hex, pattern=1,
+                               align='left'),
+            False: novo_formato(bg_color='#' + row2_hex, pattern=1,
+                                align='left'),
+        }
+        formatos_dir = {
+            True: novo_formato(bg_color='#' + row1_hex, pattern=1,
+                               align='right'),
+            False: novo_formato(bg_color='#' + row2_hex, pattern=1,
+                                align='right'),
+        }
+        formatos_esq_data = {
+            True: novo_formato(bg_color='#' + row1_hex, pattern=1,
+                               align='left', num_format='dd/mm/yyyy'),
+            False: novo_formato(bg_color='#' + row2_hex, pattern=1,
+                                align='left', num_format='dd/mm/yyyy'),
+        }
+        formatos_dir_data = {
+            True: novo_formato(bg_color='#' + row1_hex, pattern=1,
+                               align='right', num_format='dd/mm/yyyy'),
+            False: novo_formato(bg_color='#' + row2_hex, pattern=1,
+                                align='right', num_format='dd/mm/yyyy'),
+        }
+
+        for nome_aba, df_aba in abas:
+            ws = wb.add_worksheet(nome_aba)
+            n_cols = len(colunas)
+            subtotal = len(df_aba) + 1  # base 0 no XlsxWriter
+            rotulo = col_valor_idx - 1 if col_valor_idx > 0 else 0
+            letra_valor = xl_col_to_name(col_valor_idx)
+            formula_valor = f'=SUM({letra_valor}2:{letra_valor}{subtotal})'
+
+            # [gerado] As larguras são medidas por coluna (vetorizado), e não
+            # célula a célula: mesmo resultado do openpyxl, bem mais rápido.
+            larguras: list[int] = []
+            for indice, coluna in enumerate(colunas):
+                if isinstance(
+                    coluna, (pd.Timestamp, datetime.datetime, datetime.date)
+                ):
+                    raise _ExportacaoRapidaIndisponivel('cabeçalho de data')
+                maior = len(str(coluna or ''))
+                if len(df_aba):
+                    maior = max(
+                        maior,
+                        _maior_comprimento_coluna(
+                            df_aba.iloc[:, indice]
+                        ),
+                    )
+                if indice == rotulo:
+                    maior = max(maior, len('SUBTOTAL'))
+                elif indice == col_valor_idx:
+                    maior = max(maior, len(formula_valor))
+                larguras.append(maior)
+
+            for indice, coluna in enumerate(colunas):
+                _escrever_celula(
+                    ws, 0, indice, coluna,
+                    formato_cabecalho, formato_cabecalho,
+                )
+
+            if len(df_aba):
+                mascara_kt = (
+                    df_aba['Tipo']
+                    .astype(str).str.strip().str.upper().eq('KT')
+                    .tolist()
+                )
+            else:
+                mascara_kt = []
+
+            for linha, valores in enumerate(
+                df_aba.itertuples(index=False, name=None)
+            ):
+                excel_row = linha + 2  # 1 = cabeçalho
+                usa_row1 = excel_row % 2 != 0
+                for indice, valor in enumerate(valores):
+                    eh_kt = mascara_kt[linha] and indice == col_valor_idx
+                    if eh_kt:
+                        _escrever_celula(
+                            ws, linha + 1, indice, valor,
+                            formato_kt, formato_kt_data,
+                        )
+                    elif indice == col_valor_idx:
+                        _escrever_celula(
+                            ws, linha + 1, indice, valor,
+                            formatos_dir[usa_row1],
+                            formatos_dir_data[usa_row1],
+                        )
+                    else:
+                        _escrever_celula(
+                            ws, linha + 1, indice, valor,
+                            formatos_esq[usa_row1],
+                            formatos_esq_data[usa_row1],
+                        )
+
+            for indice in range(n_cols):
+                if indice == rotulo:
+                    ws.write_string(
+                        subtotal, indice, 'SUBTOTAL',
+                        formato_subtotal_rotulo,
+                    )
+                elif indice == col_valor_idx:
+                    ws.write_formula(
+                        subtotal, indice, formula_valor,
+                        formato_subtotal_valor,
+                    )
+                else:
+                    ws.write_blank(
+                        subtotal, indice, None, formato_subtotal_outro
+                    )
+
+            for indice, largura in enumerate(larguras):
+                # O XlsxWriter soma 0.7109375 ao valor gravado; descontamos
+                # para o arquivo ficar com a mesma largura do openpyxl.
+                ws.set_column(
+                    indice, indice, min(largura + 4, 40) - 0.7109375
+                )
+
+        wb.close()
+        wb = None
+    except Exception:
+        if wb is not None:
+            try:
+                wb.close()
+            except Exception:  # noqa: BLE001 - melhor esforço
+                pass
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+        raise
+
+    # [gerado] Mesmo nascimento atômico do caminho openpyxl.
+    shutil.move(temp_path, str(caminho_arquivo))
+    return caminho_arquivo
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# FUNÇÃO: exportar_excel
+# Objetivo: Ponto de entrada da exportação. Usa o XlsxWriter quando disponível
+#           e, em qualquer falha ou ambiente sem o pacote, refaz pelo openpyxl
+#           — que é o caminho antigo, preservado integralmente.
+# ──────────────────────────────────────────────────────────────────────────────
+def exportar_excel(df_final, separar, destino, nome, cor='Azul'):
+    try:
+        return _exportar_excel_xlsxwriter(
+            df_final, separar, destino, nome, cor
+        )
+    except Exception:  # noqa: BLE001 - qualquer desvio usa o caminho seguro
+        return _exportar_excel_openpyxl(
+            df_final, separar, destino, nome, cor
+        )

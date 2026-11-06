@@ -407,7 +407,13 @@ class StarField(QWidget):
         self._clock.start()
         self._timer = QTimer(self)
         self._timer.setInterval(40)          # ~25 fps: suficiente p/ cintilar
-        self._timer.timeout.connect(self.update)
+        self._timer.timeout.connect(self._tick)
+        # O gradiente de fundo é estático: fica em cache para não ser
+        # reconstruído a cada quadro da animação.
+        self._bg_cache: QPixmap | None = None
+        # Regiões máximas de cada estrela: a animação repinta só esses
+        # retângulos em vez da janela inteira a cada quadro.
+        self._star_boxes: list[QRect] = []
 
     @staticmethod
     def _make_stars(rng: random.Random) -> list[Star]:
@@ -436,6 +442,7 @@ class StarField(QWidget):
     # ── tema ────────────────────────────────────────────────────────────────
     def set_theme(self, theme: Theme) -> None:
         self._theme = theme
+        self._bg_cache = None
         self._sync_timer()
         self.update()
 
@@ -448,37 +455,103 @@ class StarField(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        self._sync_star_boxes()
         self._sync_timer()
 
     def hideEvent(self, event) -> None:
         super().hideEvent(event)
         self._sync_timer()
 
+    def resizeEvent(self, event) -> None:
+        self._bg_cache = None
+        self._sync_star_boxes()
+        super().resizeEvent(event)
+
+    def _sync_star_boxes(self) -> None:
+        """Calcula o retângulo máximo de cada estrela na escala atual."""
+        w, h = float(self.width()), float(self.height())
+        if w <= 0 or h <= 0:
+            self._star_boxes = []
+            return
+        caixas: list[QRect] = []
+        for star in self._stars:
+            raio = star.radius * 1.3          # maior raio possível da onda
+            if star.halo:
+                raio *= 4.2                   # alcance do halo
+            raio += 2                          # folga do antialiasing
+            cx, cy = star.x * w, star.y * h
+            lado = int(raio * 2) + 1
+            caixas.append(
+                QRect(int(cx - raio), int(cy - raio), lado, lado)
+            )
+        self._star_boxes = caixas
+
+    def _tick(self) -> None:
+        """Repinta apenas as regiões das estrelas, não a janela inteira."""
+        if not self._star_boxes:
+            self.update()
+            return
+        for caixa in self._star_boxes:
+            self.update(caixa)
+
     # ── pintura ─────────────────────────────────────────────────────────────
+    def _background(self) -> QPixmap:
+        """Devolve o gradiente de fundo em cache, recriando só se necessário."""
+        largura = max(1, self.width())
+        altura = max(1, self.height())
+        dpr = self.devicePixelRatioF() or 1.0
+        largura_fisica = int(round(largura * dpr))
+        altura_fisica = int(round(altura * dpr))
+
+        cache = self._bg_cache
+        if (
+            cache is not None
+            and cache.devicePixelRatio() == dpr
+            and cache.width() == largura_fisica
+            and cache.height() == altura_fisica
+        ):
+            return cache
+
+        pixmap = QPixmap(largura_fisica, altura_fisica)
+        pixmap.setDevicePixelRatio(dpr)
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        theme = self._theme
+        w, h = float(largura), float(altura)
+        p = QPainter(pixmap)
+        try:
+            grad = QLinearGradient(0, 0, 0, h)
+            grad.setColorAt(0.0, C(theme.bg_top))
+            grad.setColorAt(1.0, C(theme.bg_bottom))
+            p.fillRect(QRectF(0, 0, w, h), QBrush(grad))
+
+            if theme.glow_alpha:
+                glow = QColor(theme.glow)
+                glow.setAlpha(theme.glow_alpha)
+                radial = QRadialGradient(
+                    QPointF(w * 0.84, h * 0.01), max(w, h) * 0.9
+                )
+                radial.setColorAt(0.0, glow)
+                transparent = QColor(theme.glow)
+                transparent.setAlpha(0)
+                radial.setColorAt(1.0, transparent)
+                p.fillRect(QRectF(0, 0, w, h), QBrush(radial))
+        finally:
+            p.end()
+
+        self._bg_cache = pixmap
+        return pixmap
+
     def paintEvent(self, event) -> None:
         theme = self._theme
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w, h = float(self.width()), float(self.height())
-
-        grad = QLinearGradient(0, 0, 0, h)
-        grad.setColorAt(0.0, C(theme.bg_top))
-        grad.setColorAt(1.0, C(theme.bg_bottom))
-        p.fillRect(QRectF(0, 0, w, h), QBrush(grad))
-
-        if theme.glow_alpha:
-            glow = QColor(theme.glow)
-            glow.setAlpha(theme.glow_alpha)
-            radial = QRadialGradient(QPointF(w * 0.84, h * 0.01), max(w, h) * 0.9)
-            radial.setColorAt(0.0, glow)
-            transparent = QColor(theme.glow)
-            transparent.setAlpha(0)
-            radial.setColorAt(1.0, transparent)
-            p.fillRect(QRectF(0, 0, w, h), QBrush(radial))
+        p.drawPixmap(0, 0, self._background())
 
         if not theme.stars:
             return
 
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = float(self.width()), float(self.height())
         now = self._clock.elapsed() / 1000.0
         p.setPen(Qt.PenStyle.NoPen)
         for star in self._stars:

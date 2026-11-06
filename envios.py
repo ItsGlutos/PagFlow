@@ -29,12 +29,16 @@ com ``enviar(grupo)`` e ``fechar()``.
 from __future__ import annotations
 
 import html as _html
+import posixpath
 import re
 import time
 import unicodedata
+import xml.parsers.expat
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
+from xml.etree import ElementTree as ET
 
 import pandas as pd
 
@@ -81,6 +85,14 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _SEPARADORES_RE = re.compile(r"[;,\s]+")
 _ESPACOS_RE = re.compile(r"\s+")
 _NUM_RE = re.compile(r"^(\d+)(?:[.,]0+)?$")
+# Mesma limpeza usada pelo openpyxl para decidir se um formato é de data.
+_STRIP_FORMATO_RE = re.compile(r'.*?"|\[(?!hh?\]|mm?\]|ss?\])[^\]]*\]')
+_FORMATO_DATA_RE = re.compile(r"(?<![_\\])[dmhysDMHYS]")
+# IDs de formato nativo do Excel que representam data/hora. A lista é a mesma
+# que o openpyxl reconhece em BUILTIN_FORMATS (14-22, 45-47).
+_FORMATOS_DATA_EMBUTIDOS = frozenset(
+    {14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47}
+)
 
 
 # ---------------------------------------------------------------------------
@@ -310,18 +322,30 @@ def ler_contatos(caminho: str | Path) -> dict[str, Contato]:
         )
 
     contatos: dict[str, Contato] = {}
-    for _, linha in dataframe.iterrows():
-        codigo = normalizar_fornecedor(linha[coluna_fornecedor])
+    # Iterar pelas colunas é bem mais rápido que iterrows(): evita criar uma
+    # Series por linha, mantendo a mesma ordem e os mesmos valores.
+    for bruto_codigo, nome_bruto, email_bruto in zip(
+        dataframe[coluna_fornecedor],
+        dataframe[coluna_nome],
+        dataframe[coluna_email],
+    ):
+        codigo = normalizar_fornecedor(bruto_codigo)
         if not codigo:
             continue
-        nome_bruto = linha[coluna_nome]
         if _vazio(nome_bruto):
             continue
         nome = str(nome_bruto).strip()
 
-        emails = dividir_emails(linha[coluna_email])
-        validos = tuple(email for email in emails if validar_email(email))
-        invalidos = tuple(email for email in emails if not validar_email(email))
+        emails = dividir_emails(email_bruto)
+        validos_lista: list[str] = []
+        invalidos_lista: list[str] = []
+        for email in emails:
+            if validar_email(email):
+                validos_lista.append(email)
+            else:
+                invalidos_lista.append(email)
+        validos = tuple(validos_lista)
+        invalidos = tuple(invalidos_lista)
 
         existente = contatos.get(codigo)
         if existente is None:
@@ -370,29 +394,405 @@ def localizar_relatorios(
     return relatorios
 
 
-def _ler_relatorio(caminho: Path) -> RelatorioInfo:
-    """Lê todas as abas do ``.xlsx`` e agrega fornecedores, bloqueios e CFD.
+# [gerado] Namespaces internos do formato .xlsx (Office Open XML).
+_XLSX_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+_XLSX_REL_NS = (
+    "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+)
 
-    A coluna ``Fornecedor`` é procurada pelo cabeçalho (linha 1) de cada aba;
-    linhas em branco (como a de SUBTOTAL) são ignoradas. Os valores de
+
+class _LeituraRapidaInvalida(Exception):
+    """Arquivo fora do padrão simples: a leitura volta para o pandas."""
+
+
+# ---------------------------------------------------------------------------
+# Leitura rápida dos relatórios gerados pelo PagFlow
+# ---------------------------------------------------------------------------
+# O caminho antigo (pandas.read_excel) monta um DataFrame completo de todas as
+# abas. Como o envio só precisa de quatro colunas (Fornecedor, Valor, Bloqueio
+# e Tipo), a leitura rápida percorre o XML da planilha com o expat e monta
+# apenas essas colunas. Qualquer construção não prevista (data ISO, número com
+# formato de data, tipo de célula desconhecido, aba que não seja worksheet)
+# cancela o caminho rápido e refaz a leitura pelo pandas — o resultado é o
+# mesmo, apenas mais lento para arquivos atípicos.
+
+def _coluna_da_referencia(ref: str) -> int:
+    """Converte ``"H12"`` no índice zero-based da coluna (``7``)."""
+    coluna = 0
+    for caractere in ref:
+        if "A" <= caractere <= "Z":
+            coluna = coluna * 26 + (ord(caractere) - 64)
+        elif "a" <= caractere <= "z":
+            coluna = coluna * 26 + (ord(caractere) - 96)
+        else:
+            return coluna - 1
+    raise _LeituraRapidaInvalida("referência de célula sem número de linha")
+
+
+def _texto_do_xml(elemento) -> str:
+    """Junta o texto visível de um ``<si>``/``<is>``, ignorando fonética.
+
+    O openpyxl usa ``Text.from_tree(...).content``, que considera apenas o
+    texto simples e os blocos formatados; ``<rPh>`` (leitura fonética) fica de
+    fora. Repetimos a mesma regra para os valores baterem exatamente.
+    """
+    partes: list[str] = []
+    for filho in elemento:
+        if filho.tag == _XLSX_NS + "rPh":
+            continue
+        if filho.tag == _XLSX_NS + "t":
+            if filho.text:
+                partes.append(filho.text)
+        elif filho.tag == _XLSX_NS + "r":
+            for neto in filho:
+                if neto.tag == _XLSX_NS + "t" and neto.text:
+                    partes.append(neto.text)
+    return "".join(partes)
+
+
+def _indice_da_coluna(nomes, aliases: tuple[str, ...]) -> int | None:
+    """Repete a busca de :func:`_coluna_por_nome` sobre cabeçalhos do XML."""
+    for coluna, nome in nomes:
+        if normalizar_chave(nome) in aliases:
+            return coluna
+    for coluna, nome in nomes:
+        chave = normalizar_chave(nome)
+        if any(alias in chave for alias in aliases):
+            return coluna
+    return None
+
+
+def _formato_eh_data(codigo: str) -> bool:
+    """Equivalente local de ``openpyxl.styles.numbers.is_date_format``."""
+    if not codigo:
+        return False
+    codigo = codigo.split(";")[0]
+    codigo = _STRIP_FORMATO_RE.sub("", codigo)
+    return _FORMATO_DATA_RE.search(codigo) is not None
+
+
+def _estilos_com_formato_de_data(arquivo_zip: zipfile.ZipFile) -> set[int]:
+    """Índices de estilo (``cellXfs``) que exibem números como data.
+
+    A leitura rápida não converte números em data; se alguma das colunas que
+    interessam usar um desses estilos, o caminho rápido é abandonado para não
+    alterar os totais.
+    """
+    try:
+        raiz = ET.fromstring(arquivo_zip.read("xl/styles.xml"))
+    except KeyError:
+        return set()
+
+    formatos: dict[int, str] = {}
+    lista_formatos = raiz.find(_XLSX_NS + "numFmts")
+    if lista_formatos is not None:
+        for formato in lista_formatos:
+            formatos[int(formato.get("numFmtId"))] = (
+                formato.get("formatCode") or ""
+            )
+
+    estilos: set[int] = set()
+    lista_estilos = raiz.find(_XLSX_NS + "cellXfs")
+    if lista_estilos is not None:
+        for indice, estilo in enumerate(lista_estilos):
+            numero = int(estilo.get("numFmtId") or 0)
+            codigo = formatos.get(numero) or ""
+            if codigo:
+                if _formato_eh_data(codigo):
+                    estilos.add(indice)
+            elif numero in _FORMATOS_DATA_EMBUTIDOS:
+                estilos.add(indice)
+    return estilos
+
+
+def _numero_da_celula(texto: str):
+    """Mesma distinção int/float usada pelo openpyxl para células numéricas."""
+    if "." in texto or "e" in texto.lower():
+        try:
+            return float(texto)
+        except ValueError as erro:
+            raise _LeituraRapidaInvalida("número inválido") from erro
+    try:
+        return int(texto)
+    except ValueError as erro:
+        raise _LeituraRapidaInvalida("número inválido") from erro
+
+
+class _AbaXlsx:
+    """Callbacks do expat que extraem as quatro colunas de uma aba."""
+
+    def __init__(
+        self, shared: list[str], estilos_data: set[int]
+    ) -> None:
+        self.shared = shared
+        self.estilos_data = estilos_data
+        self.cabecalho_lido = False
+        self.indices = [None, None, None, None]
+        self.slots: dict[int, int] = {}
+        self.listas: list[list] = [[], [], [], []]
+        self.celulas_cabecalho: list[tuple[int, object]] = []
+        self.valores_linha: list = []
+        self.numero_linha: str | None = None
+        self.coluna_celula: int | None = None
+        self.tipo_celula: str | None = None
+        self.estilo_celula: str | None = None
+        self.valor_celula: str | None = None
+        self.partes_texto: list[str] = []
+        self.texto: list[str] = []
+        self.dentro_de_valor = False
+        self.dentro_de_string = False
+        self.dentro_de_texto = False
+        self.dentro_de_rph = False
+        self.ignorar_celula = False
+
+    # ── callbacks do expat ─────────────────────────────────────────────────
+    def start(self, nome: str, atributos: dict) -> None:
+        if nome == "row":
+            # Estilo herdado da linha poderia transformar número em data sem
+            # que a célula tivesse o atributo "s"; nesse caso, caminho seguro.
+            if "s" in atributos or atributos.get("customFormat") == "1":
+                raise _LeituraRapidaInvalida("estilo herdado da linha")
+            self.numero_linha = atributos.get("r")
+            if self.cabecalho_lido:
+                self.valores_linha = [None, None, None, None]
+            else:
+                self.celulas_cabecalho = []
+        elif nome == "col":
+            # Mesmo raciocínio para estilo herdado da coluna.
+            if "style" in atributos:
+                raise _LeituraRapidaInvalida("estilo herdado da coluna")
+        elif nome == "c":
+            referencia = atributos.get("r")
+            if not referencia:
+                raise _LeituraRapidaInvalida("célula sem referência")
+            self.coluna_celula = _coluna_da_referencia(referencia)
+            # Depois do cabeçalho, células de outras colunas não precisam ser
+            # convertidas: a leitura do XML continua, mas o valor é descartado.
+            self.ignorar_celula = (
+                self.cabecalho_lido and self.coluna_celula not in self.slots
+            )
+            self.tipo_celula = atributos.get("t")
+            self.estilo_celula = atributos.get("s")
+            self.valor_celula = None
+            self.partes_texto = []
+            self.texto = []
+            self.dentro_de_valor = False
+            self.dentro_de_string = False
+            self.dentro_de_texto = False
+            self.dentro_de_rph = False
+        elif nome == "v":
+            if not self.ignorar_celula:
+                self.dentro_de_valor = True
+                self.texto = []
+        elif nome == "is":
+            if not self.ignorar_celula:
+                self.dentro_de_string = True
+        elif nome == "rPh":
+            self.dentro_de_rph = True
+        elif nome == "t":
+            if (
+                self.dentro_de_string
+                and not self.ignorar_celula
+                and not self.dentro_de_rph
+            ):
+                self.dentro_de_texto = True
+                self.texto = []
+
+    def dados(self, texto: str) -> None:
+        if (
+            not self.ignorar_celula
+            and not self.dentro_de_rph
+            and (self.dentro_de_valor or self.dentro_de_texto)
+        ):
+            self.texto.append(texto)
+
+    def end(self, nome: str) -> None:
+        if nome == "v":
+            if not self.ignorar_celula and self.dentro_de_valor:
+                self.valor_celula = "".join(self.texto)
+                self.dentro_de_valor = False
+                self.texto = []
+        elif nome == "t":
+            if not self.ignorar_celula and self.dentro_de_texto:
+                self.partes_texto.append("".join(self.texto))
+                self.dentro_de_texto = False
+                self.texto = []
+        elif nome == "rPh":
+            self.dentro_de_rph = False
+        elif nome == "is":
+            self.dentro_de_string = False
+        elif nome == "c":
+            self._fechar_celula()
+        elif nome == "row":
+            self._fechar_linha()
+
+    # ── conversão de valores ───────────────────────────────────────────────
+    def _converter(self):
+        tipo = self.tipo_celula
+        if tipo == "inlineStr":
+            return "".join(self.partes_texto) if self.partes_texto else None
+
+        texto = self.valor_celula
+        if texto is None:
+            return None
+        if tipo == "s":
+            try:
+                return self.shared[int(texto)]
+            except (ValueError, IndexError) as erro:
+                raise _LeituraRapidaInvalida("sharedString inválida") from erro
+        if tipo == "b":
+            try:
+                return bool(int(texto))
+            except ValueError as erro:
+                raise _LeituraRapidaInvalida("booleano inválido") from erro
+        if tipo in ("e", "str"):
+            return texto
+        if tipo == "d":
+            raise _LeituraRapidaInvalida("data ISO")
+        if tipo not in (None, "n"):
+            raise _LeituraRapidaInvalida(f"tipo de célula: {tipo}")
+        if texto == "":
+            return None
+        if self.estilo_celula is not None:
+            if int(self.estilo_celula) in self.estilos_data:
+                raise _LeituraRapidaInvalida("número formatado como data")
+        return _numero_da_celula(texto)
+
+    def _fechar_celula(self) -> None:
+        if self.ignorar_celula:
+            self.coluna_celula = None
+            self.ignorar_celula = False
+            return
+        if not self.cabecalho_lido:
+            # No cabeçalho é preciso ler todas as células para localizar as
+            # colunas que interessam.
+            self.celulas_cabecalho.append(
+                (self.coluna_celula, self._converter())
+            )
+        else:
+            # Nas linhas de dados só as quatro colunas escolhidas são lidas.
+            slot = self.slots.get(self.coluna_celula)
+            if slot is not None:
+                self.valores_linha[slot] = self._converter()
+        self.coluna_celula = None
+
+    def _fechar_linha(self) -> None:
+        if not self.cabecalho_lido:
+            if self.numero_linha not in (None, "1"):
+                raise _LeituraRapidaInvalida("primeira linha não é a 1")
+            nomes = sorted(
+                (coluna, valor)
+                for coluna, valor in self.celulas_cabecalho
+                if valor is not None
+            )
+            self.indices[0] = _indice_da_coluna(nomes, ("fornecedor",))
+            self.indices[1] = _indice_da_coluna(nomes, ("valor",))
+            self.indices[2] = _indice_da_coluna(
+                nomes,
+                ("bloqueio", "bloqueio de pagamento", "blp", "bip", "bloq"),
+            )
+            self.indices[3] = _indice_da_coluna(nomes, ("tipo",))
+            self.slots = {
+                coluna: slot
+                for slot, coluna in enumerate(self.indices)
+                if coluna is not None
+            }
+            self.cabecalho_lido = True
+            self.celulas_cabecalho = []
+        else:
+            for slot in self.slots.values():
+                self.listas[slot].append(self.valores_linha[slot])
+            self.valores_linha = []
+        self.numero_linha = None
+
+    def resultado(self) -> dict[str, list]:
+        if not self.cabecalho_lido:
+            return {}
+        return {
+            nome: self.listas[slot]
+            for slot, nome in enumerate(
+                ("Fornecedor", "Valor", "Bloqueio", "Tipo")
+            )
+            if self.indices[slot] is not None
+        }
+
+
+def _ler_aba_rapida(
+    arquivo, shared: list[str], estilos_data: set[int]
+) -> dict[str, list]:
+    aba = _AbaXlsx(shared, estilos_data)
+    parser = xml.parsers.expat.ParserCreate()
+    parser.StartElementHandler = aba.start
+    parser.EndElementHandler = aba.end
+    parser.CharacterDataHandler = aba.dados
+    parser.ParseFile(arquivo)
+    return aba.resultado()
+
+
+def _ler_relatorio_rapido(caminho: Path) -> RelatorioInfo:
+    """Lê o ``.xlsx`` sem passar pelo DataFrame completo do pandas."""
+    with zipfile.ZipFile(caminho) as arquivo_zip:
+        shared: list[str] = []
+        try:
+            raiz = ET.fromstring(arquivo_zip.read("xl/sharedStrings.xml"))
+            shared = [
+                _texto_do_xml(item)
+                for item in raiz
+                if item.tag == _XLSX_NS + "si"
+            ]
+        except KeyError:
+            pass
+
+        estilos_data = _estilos_com_formato_de_data(arquivo_zip)
+
+        workbook = ET.fromstring(arquivo_zip.read("xl/workbook.xml"))
+        relacoes = ET.fromstring(
+            arquivo_zip.read("xl/_rels/workbook.xml.rels")
+        )
+        alvo_por_id = {
+            relacao.get("Id"): relacao.get("Target") for relacao in relacoes
+        }
+
+        folhas: list[str] = []
+        for folha in workbook.find(_XLSX_NS + "sheets"):
+            alvo = alvo_por_id[folha.get(_XLSX_REL_NS + "id")]
+            if alvo.startswith("/"):
+                alvo = alvo.lstrip("/")
+            else:
+                alvo = posixpath.join("xl", alvo)
+            alvo = posixpath.normpath(alvo)
+            if not alvo.startswith("xl/worksheets/"):
+                raise _LeituraRapidaInvalida("aba não é worksheet")
+            folhas.append(alvo)
+
+        def abas():
+            for alvo in folhas:
+                with arquivo_zip.open(alvo) as arquivo_aba:
+                    dados = _ler_aba_rapida(
+                        arquivo_aba, shared, estilos_data
+                    )
+                if dados:
+                    yield pd.DataFrame(dados, dtype=object)
+
+        return _agregar_abas(abas(), caminho)
+
+
+def _agregar_abas(
+    abas: Iterable[pd.DataFrame], caminho: Path
+) -> RelatorioInfo:
+    """Agrega fornecedores, bloqueios e CFD a partir das abas já lidas.
+
+    A lógica é a mesma para o caminho rápido e para o pandas: os valores de
     bloqueio e de CFD (documentos ``KT``) são somados em módulo, porque o
     e-mail informa ao transportador a quantia efetiva, sempre positiva.
     """
-    try:
-        abas = pd.read_excel(caminho, sheet_name=None, dtype=object)
-    except Exception as erro:  # noqa: BLE001 - mensagem amigável
-        raise EnvioError(
-            f"Não foi possível ler o relatório:\n{caminho}\n\n"
-            f"Detalhe técnico: {erro}"
-        ) from erro
-
     encontrados: set[str] = set()
     documentos_bloqueados = 0
     valor_bloqueado = 0.0
     documentos_cfd = 0
     valor_cfd = 0.0
 
-    for _nome_aba, df in (abas or {}).items():
+    for df in abas:
         if df is None or df.empty:
             continue
 
@@ -437,6 +837,30 @@ def _ler_relatorio(caminho: Path) -> RelatorioInfo:
         documentos_cfd=documentos_cfd,
         valor_cfd=valor_cfd,
     )
+
+
+def _ler_relatorio(caminho: Path) -> RelatorioInfo:
+    """Lê todas as abas do ``.xlsx`` e agrega fornecedores, bloqueios e CFD.
+
+    A coluna ``Fornecedor`` é procurada pelo cabeçalho (linha 1) de cada aba;
+    linhas em branco (como a de SUBTOTAL) são ignoradas. O caminho rápido é
+    tentado primeiro; se o arquivo tiver qualquer estrutura não prevista, a
+    leitura é refeita pelo pandas, exatamente como antes.
+    """
+    try:
+        return _ler_relatorio_rapido(caminho)
+    except Exception:  # noqa: BLE001 - qualquer desvio volta ao caminho seguro
+        pass
+
+    try:
+        abas = pd.read_excel(caminho, sheet_name=None, dtype=object)
+    except Exception as erro:  # noqa: BLE001 - mensagem amigável
+        raise EnvioError(
+            f"Não foi possível ler o relatório:\n{caminho}\n\n"
+            f"Detalhe técnico: {erro}"
+        ) from erro
+
+    return _agregar_abas((abas or {}).values(), caminho)
 
 
 # ---------------------------------------------------------------------------

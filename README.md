@@ -183,3 +183,5 @@ Valores monetários no SAP podem vir com o sinal de menos no final da string (ex
 O arquivo `.xlsx` é escrito primeiro em um caminho temporário e só é movido para o destino final após a conclusão, evitando que o usuário veja um arquivo corrompido ou parcialmente escrito.
 
 A coluna de bloqueio tem nome diferente em cada layout: `BlP` no FBL1N e `BIP` no REL_LOG. Como ela fica em uma posição que o tratamento descarta, o PagFlow a localiza pelo cabeçalho antes dos descartes e a devolve ao final do relatório como **Bloqueio**, preservando o valor original do SAP (`B` para bloqueado, `S`/branco para sem bloqueio).
+
+A exportação usa o **XlsxWriter** (mais rápido em volumes grandes) quando ele está instalado; se o pacote não estiver presente ou o conteúdo fugir do padrão, a gravação é refeita pelo **openpyxl**, com o mesmo resultado visual. Na leitura dos relatórios para envio, o PagFlow extrai diretamente do XML apenas as colunas `Fornecedor`, `Valor`, `Bloqueio` e `Tipo`; arquivos atípicos voltam automaticamente para o `pandas.read_excel`.
