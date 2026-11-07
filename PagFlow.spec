@@ -10,8 +10,15 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    # Fontes dos temas secretos (OFL) e a arte do tema Graduation.
+    # Sem as fontes o app cai para Segoe UI; sem a arte o tema segue sem a capa.
+    datas=[
+        ('assets/fonts', 'assets/fonts'),
+        ('assets/images', 'assets/images'),
+    ],
     hiddenimports=[
+        # Dados dos temas secretos (importado por main.py).
+        'temas_extra',
         # Envio de e-mails via Outlook Desktop (pywin32, importado de forma
         # lazy em envios.py — precisa ser declarado para o PyInstaller embutir).
         'envios',

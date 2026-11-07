@@ -96,6 +96,21 @@ Os valores são somados em módulo (sempre positivos) e consideram todas as abas
 
 ---
 
+## Configurações e temas
+
+A engrenagem no canto superior direito, ao lado da chave de tema, abre **Configurações** — quatro abas: **Geral**, **Aparência**, **Inserir código** e **Sobre**.
+
+- **Aparência** lista os dois temas principais e os temas extras que já foram desbloqueados. O botão **Restaurar padrão PagFlow** devolve o visual original (tema escuro) a qualquer momento, sem apagar os temas desbloqueados.
+- **Inserir código** é a porta dos temas extras: um código de uma palavra desbloqueia e aplica o tema na hora. Maiúsculas, acentos e espaços são ignorados; o tema fica salvo e volta na próxima abertura. Código inválido mostra um aviso e não altera nada.
+- **Geral** permite reduzir as animações (as estrelas do tema escuro ficam estáticas).
+- **Sobre** traz versão, créditos e a opção de esquecer os temas desbloqueados.
+
+Os temas extras **não têm variante clara/escura**: cada um é uma direção visual única, com tipografia, fundo e motivos próprios. Com um tema extra ativo, o alternador do topo continua funcionando: clicar no lado oposto devolve o PagFlow ao tema escuro ou claro principal.
+
+Os códigos são easter eggs de produto, não autenticação — não aparecem em nenhuma lista antes de serem ativados.
+
+---
+
 ## Pipeline interno
 
 ```
@@ -138,11 +153,15 @@ Arquivos .xls (pasta de origem)
 ```
 .
 ├── main.py          # Interface gráfica (PyQt6) e ponto de entrada
+├── temas_extra.py   # Tokens dos temas secretos (dados puros, sem UI)
 ├── ope.py           # Orquestração: leitura da pasta, concatenação e chamada de exportação
 ├── funcoes.py       # Lógica de negócio: detecção, tratamento e exportação
 ├── envios.py        # Envio dos relatórios por fornecedor via Outlook Desktop
 ├── requirements.txt # Dependências para rodar a partir do código-fonte
-├── docs/            # Capturas dos dois temas
+├── assets/fonts/    # Fontes OFL usadas pelos temas secretos
+├── assets/images/   # Artes dos temas (capas do Graduation e do Ozzy)
+├── design/          # Kit de design dos temas (referência visual, não entra no executável)
+├── docs/            # Capturas dos temas e guia para criar novos temas
 └── PagFlow.spec     # Configuração do PyInstaller para geração do executável
 ```
 

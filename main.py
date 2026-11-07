@@ -10,6 +10,11 @@ Dois temas completos:
               diminuem (campo de estrelas animado, pintado à mão em QPainter)
   • claro   → céu diurno, mesma estrutura, destaque em azul-celeste
 
+Quatro temas secretos, ativados por código (uma palavra cada) na aba
+“Inserir código” das Configurações. Eles não têm variante clara/escura: são
+uma direção visual única. O botão “Restaurar padrão” devolve o PagFlow
+original (escuro), com o alternador escuro↔claro de volta.
+
 A troca de tema preserva geometria, proporções e estados: só os tokens mudam.
 """
 
@@ -18,8 +23,10 @@ from __future__ import annotations
 import math
 import os
 import random
+import sys
 import threading
-from dataclasses import dataclass
+import unicodedata
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from PyQt6.QtCore import (
@@ -27,15 +34,20 @@ from PyQt6.QtCore import (
     QRect, QRectF, QSettings, QSize, Qt, QTimer, QVariantAnimation, pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QBrush, QColor, QFont, QFontMetrics, QGuiApplication, QIcon, QLinearGradient,
-    QPainter, QPainterPath, QPalette, QPen, QPixmap, QRadialGradient,
+    QBrush, QColor, QFont, QFontDatabase, QFontMetrics, QGuiApplication, QIcon,
+    QLinearGradient, QPainter, QPainterPath, QPalette, QPen, QPixmap,
+    QRadialGradient,
 )
 from PyQt6.QtWidgets import (
     QAbstractButton, QAbstractItemView, QApplication, QButtonGroup, QDialog,
     QFileDialog, QFrame, QGraphicsDropShadowEffect, QGraphicsOpacityEffect,
-    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton,
-    QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
+    QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox,
+    QPushButton, QScrollArea, QStackedWidget, QTableWidget,
+    QTableWidgetItem,
+    QTextEdit, QVBoxLayout, QWidget,
 )
+
+from temas_extra import EXTRA_THEMES as _EXTRA_THEME_DATA
 
 TAU = math.tau
 
@@ -43,6 +55,106 @@ TAU = math.tau
 # ══════════════════════════════════════════════════════════════════════════════
 #  TOKENS DE TEMA
 # ══════════════════════════════════════════════════════════════════════════════
+@dataclass(frozen=True)
+class ThemeArt:
+    """A “película” visual que não cabe nos tokens de cor.
+
+    Fontes, motivos do logo, padrão de fundo, gradientes de estado e as
+    transformações tipográficas (caixa alta, tracking). Tudo opcional: os
+    campos vazios caem nos tokens do próprio ``Theme``.
+    """
+
+    is_light: bool = False
+    secret_code: str = ""
+    aliases: tuple[str, ...] = ()
+
+    # tipografia
+    display_font: str = "Segoe UI"
+    ui_font: str = "Segoe UI"
+    mono_font: str = "Consolas"
+    section_font: str = ""
+    button_font: str = ""
+    status_font: str = ""
+    status_size: int = 11
+    status_transform: str = "none"       # none | uppercase
+    status_tracking: float = 0.0         # em
+
+    # marca
+    brand_label: str = "PagFlow"
+    brand_suffix: str = ""
+    brand_suffix_style: str = "normal"   # normal | italic
+    brand_suffix_color: str = ""
+    brand_transform: str = "none"
+    brand_tracking: float = 0.0
+    brand_size: int = 16
+    brand_dy: int = 0                    # respiro superior do título, em px
+
+    # títulos de seção
+    section_transform: str = "none"
+    section_tracking: float = 0.0
+    section_size: int = 11
+
+    # botões
+    button_transform: str = "none"
+    button_tracking: float = 0.0
+    button_size: int = 12
+
+    # logo
+    logo_motif: str = "sheet"            # sheet | flower | bolt | cherry | berry
+    logo_from: str = ""
+    logo_to: str = ""
+    logo_mid: str = ""
+    logo_mid_pos: float = 0.56
+    logo_fg: str = ""
+    logo_border: str = ""
+
+    # fundo
+    pattern: str = "plain"               # plain | stars | clouds | grain | paper | dotgrid
+
+    # superfícies específicas
+    primary_text: str = ""
+    card_from: str = ""
+    card_to: str = ""
+    card_edge_from: str = ""
+    card_edge_to: str = ""
+    card_edge_height: int = 0
+    card_alpha: float = 0.0
+    card_edge_alpha: int = 255
+
+    chip_from: str = ""
+    chip_to: str = ""
+    chip_fg: str = ""
+
+    badge_bg: str = ""
+    badge_fg: str = ""
+    badge_border: str = ""
+    badge_font: str = ""
+    badge_transform: str = "none"
+    badge_tracking: float = 0.0
+
+    meta_font: str = ""
+    meta_transform: str = "none"
+    meta_tracking: float = 0.0
+
+    status_bg: str = ""
+    status_border: str = ""
+    status_fg: str = ""
+    status_dot: str = ""
+
+    view_active_from: str = ""
+    view_active_to: str = ""
+    view_active_fg: str = ""
+    view_active_border: str = ""
+
+    seg_active_from: str = ""
+    seg_active_to: str = ""
+    seg_active_fg: str = ""
+    seg_active_border: str = ""
+
+    dialog_title_size: int = 23
+    description: str = ""
+
+
 @dataclass(frozen=True)
 class Theme:
     key: str
@@ -93,6 +205,8 @@ class Theme:
     # céu estrelado / sombras
     stars: bool
     shadow_alpha: int
+    # película visual (fontes, motivos, padrões)
+    art: ThemeArt = field(default_factory=ThemeArt)
 
 
 DARK = Theme(
@@ -136,6 +250,7 @@ DARK = Theme(
     primary_pressed_to="#1D5590",
     stars=True,
     shadow_alpha=0,
+    art=ThemeArt(pattern="stars"),
 )
 
 LIGHT = Theme(
@@ -179,9 +294,114 @@ LIGHT = Theme(
     primary_pressed_to="#0284C7",
     stars=False,
     shadow_alpha=26,
+    art=ThemeArt(pattern="plain", is_light=True),
 )
 
-THEMES = {"dark": DARK, "light": LIGHT}
+EXTRA_THEMES: dict[str, Theme] = {
+    item["key"]: Theme(**item["theme"], art=ThemeArt(**item["art"]))
+    for item in _EXTRA_THEME_DATA
+}
+
+CORE_THEME_KEYS = ("dark", "light")
+THEME_ORDER = ("dark", "light", "graduation", "ozzy", "lana", "acai")
+THEMES: dict[str, Theme] = {"dark": DARK, "light": LIGHT, **EXTRA_THEMES}
+
+UNLOCKED_SETTING = "temas_desbloqueados"
+ANIMATIONS_SETTING = "reduzir_animacoes"
+APP_VERSION = "2.0"
+
+
+# ── códigos secretos ────────────────────────────────────────────────────────
+def normalize_code(text: str) -> str:
+    """Ignora maiúsculas, acentos, espaços e pontuação."""
+    text = unicodedata.normalize("NFKD", str(text))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return "".join(ch for ch in text.lower() if ch.isalnum())
+
+
+CODE_TO_THEME: dict[str, str] = {}
+for _key, _theme in EXTRA_THEMES.items():
+    for _code in (_theme.art.secret_code, *_theme.art.aliases):
+        if _code:
+            CODE_TO_THEME[normalize_code(_code)] = _key
+
+
+# ── persistência ────────────────────────────────────────────────────────────
+def unlocked_keys(settings: QSettings) -> set[str]:
+    raw = str(settings.value(UNLOCKED_SETTING, "") or "")
+    return {key for key in raw.split(",") if key in EXTRA_THEMES}
+
+
+def save_unlocked(settings: QSettings, keys: set[str]) -> None:
+    settings.setValue(UNLOCKED_SETTING, ",".join(sorted(keys)))
+
+
+def available_themes(settings: QSettings) -> dict[str, Theme]:
+    """Temas principais + os secretos já desbloqueados (nunca os bloqueados)."""
+    unlocked = unlocked_keys(settings)
+    ordered = [
+        key for key in THEME_ORDER
+        if key in CORE_THEME_KEYS or key in unlocked
+    ]
+    ordered += [key for key in sorted(unlocked) if key not in THEME_ORDER]
+    return {key: THEMES[key] for key in ordered}
+
+
+# ── fontes ──────────────────────────────────────────────────────────────────
+_FONTS_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
+_FONT_FAMILIES: set[str] = set()
+_UI_FONT = "Segoe UI"
+
+# ── arte ────────────────────────────────────────────────────────────────────
+_IMAGES_DIR = Path(__file__).resolve().parent / "assets" / "images"
+_IMAGE_CACHE: dict[str, QPixmap | None] = {}
+
+# capa de fundo por tema: (arquivo, lado em px @1280, opacidade)
+_THEME_COVERS: dict[str, tuple[str, float, float]] = {
+    "graduation": ("theme-art-01.jpg", 560.0, 0.40),
+    "ozzy": ("theme-art-02.jpg", 540.0, 0.55),
+}
+
+
+def theme_cover(filename: str) -> QPixmap | None:
+    """Capa de um tema, carregada uma vez. Sem o arquivo, o tema segue sem ela."""
+    if filename in _IMAGE_CACHE:
+        return _IMAGE_CACHE[filename]
+    base = _IMAGES_DIR
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        base = Path(sys._MEIPASS) / "assets" / "images"
+    pixmap: QPixmap | None = None
+    path = base / filename
+    if path.is_file():
+        loaded = QPixmap(str(path))
+        if not loaded.isNull():
+            pixmap = loaded
+    _IMAGE_CACHE[filename] = pixmap
+    return pixmap
+
+
+def load_theme_fonts() -> None:
+    """Carrega as TTFs do kit de temas. Sem elas, tudo cai para Segoe UI."""
+    global _FONT_FAMILIES
+    base = _FONTS_DIR
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        base = Path(sys._MEIPASS) / "assets" / "fonts"
+    if base.is_dir():
+        for path in sorted(base.glob("*.ttf")):
+            QFontDatabase.addApplicationFont(str(path))
+    _FONT_FAMILIES = set(QFontDatabase.families())
+
+
+def resolve_family(name: str) -> str:
+    if not name:
+        return "Segoe UI"
+    families = _FONT_FAMILIES or set(QFontDatabase.families())
+    return name if name in families else "Segoe UI"
+
+
+def tracking_px(em: float, size: int) -> float:
+    """O design expressa tracking em em; o QFont usa pixels absolutos."""
+    return max(0.0, float(em) * float(size))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -196,12 +416,22 @@ def C(hex_color: str, alpha: int | None = None) -> QColor:
 
 
 def F(px: int, weight: QFont.Weight = QFont.Weight.Normal,
-      tracking: float = 0.0, family: str = "Segoe UI") -> QFont:
-    """Fonte em pixels — evita o descompasso entre pt e px do QSS."""
-    font = QFont(family)
+      tracking: float = 0.0, family: str | None = None,
+      caps: bool = False, italic: bool = False) -> QFont:
+    """Fonte em pixels — evita o descompasso entre pt e px do QSS.
+
+    ``family`` vazio usa a fonte de interface do tema ativo (``_UI_FONT``);
+    ``tracking`` é em pixels; ``caps`` aplica caixa alta na renderização sem
+    alterar o texto real do widget (importante para o SegmentedControl).
+    """
+    font = QFont(family or _UI_FONT)
     font.setPixelSize(px)
     font.setWeight(weight)
     font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+    if italic:
+        font.setItalic(True)
+    if caps:
+        font.setCapitalization(QFont.Capitalization.AllUppercase)
     if tracking:
         font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, tracking)
     return font
@@ -341,6 +571,139 @@ def draw_mail(p: QPainter, rect: QRectF, color: QColor, width: float = 1.4) -> N
     p.drawLine(QPointF(x + w, y + h * 0.16), QPointF(x + w * 0.5, y + h * 0.52))
 
 
+def draw_motif(p: QPainter, rect: QRectF, motif: str, color: QColor,
+               width: float = 1.3) -> None:
+    """Desenha o motivo do logo do tema dentro de ``rect`` (sem imagens).
+
+    Coordenadas normalizadas: o desenho acompanha qualquer tamanho (30×30 no
+    cartão de marca, 64×64 no ícone da janela) sem deformar.
+    """
+    x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+    cx, cy = x + w / 2, y + h / 2
+    s = min(w, h)
+
+    def pt(px: float, py: float) -> QPointF:
+        return QPointF(x + px * w, y + py * h)
+
+    pen = QPen(color, width, Qt.PenStyle.SolidLine,
+               Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+
+    if motif == "flower":
+        # seis pétalas em volta de um miolo cheio
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for i in range(6):
+            angle = math.radians(-90 + i * 60)
+            px = cx + math.cos(angle) * s * 0.27
+            py = cy + math.sin(angle) * s * 0.27
+            p.drawEllipse(QPointF(px, py), s * 0.105, s * 0.105)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(color)
+        p.drawEllipse(QPointF(cx, cy), s * 0.085, s * 0.085)
+
+    elif motif == "bolt":
+        # raio de palco: ponta fina em cima, base larga embaixo
+        path = QPainterPath()
+        path.moveTo(pt(0.58, 0.06))
+        path.lineTo(pt(0.20, 0.56))
+        path.lineTo(pt(0.46, 0.56))
+        path.lineTo(pt(0.40, 0.94))
+        path.lineTo(pt(0.80, 0.42))
+        path.lineTo(pt(0.53, 0.42))
+        path.closeSubpath()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(color)
+        p.drawPath(path)
+
+    elif motif == "cherry":
+        # duas cerejas com cabinho e folha
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        stem = QPainterPath()
+        stem.moveTo(pt(0.38, 0.74))
+        stem.cubicTo(pt(0.40, 0.44), pt(0.46, 0.30), pt(0.54, 0.26))
+        stem.cubicTo(pt(0.60, 0.30), pt(0.64, 0.40), pt(0.66, 0.48))
+        p.drawPath(stem)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(color)
+        p.drawEllipse(pt(0.38, 0.76), s * 0.145, s * 0.145)
+        p.drawEllipse(pt(0.68, 0.80), s * 0.125, s * 0.125)
+        leaf = QPainterPath()
+        leaf.moveTo(pt(0.54, 0.27))
+        leaf.quadTo(pt(0.72, 0.10), pt(0.80, 0.22))
+        leaf.quadTo(pt(0.70, 0.30), pt(0.54, 0.27))
+        p.drawPath(leaf)
+
+    elif motif == "berry":
+        # cacho de açaí com folha
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawLine(pt(0.50, 0.62), pt(0.56, 0.30))
+        p.drawLine(pt(0.56, 0.30), pt(0.66, 0.22))
+        leaf = QPainterPath()
+        leaf.moveTo(pt(0.58, 0.28))
+        leaf.quadTo(pt(0.74, 0.10), pt(0.82, 0.20))
+        leaf.quadTo(pt(0.72, 0.30), pt(0.58, 0.28))
+        p.drawPath(leaf)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(color)
+        for px, py, r in (
+            (0.50, 0.66, 0.105), (0.66, 0.68, 0.100), (0.58, 0.80, 0.100),
+            (0.40, 0.78, 0.082), (0.74, 0.80, 0.078), (0.50, 0.90, 0.070),
+        ):
+            p.drawEllipse(pt(px, py), s * r, s * r)
+
+    else:  # sheet — motivo original
+        draw_sheet(p, QRectF(x + w * 0.18, y + h * 0.16, w * 0.64, h * 0.68),
+                   color, width)
+
+
+def draw_gear(p: QPainter, rect: QRectF, color: QColor, width: float = 1.3) -> None:
+    """Engrenagem compacta para a barra superior (24×24).
+
+    Dentes preenchidos em volta de um anel: em 11 px, raios finos viram um
+    sol; blocos curtos leem como engrenagem.
+    """
+    c = rect.center()
+    r = min(rect.width(), rect.height()) * 0.27
+    dente_l, dente_c = max(1.6, r * 0.62), max(2.0, r * 0.86)
+    p.save()
+    p.translate(c)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(color)
+    for i in range(8):
+        p.save()
+        p.rotate(i * 45)
+        p.drawRoundedRect(
+            QRectF(-dente_l / 2, -r - dente_c * 0.72, dente_l, dente_c),
+            dente_l * 0.32, dente_l * 0.32,
+        )
+        p.restore()
+    p.setPen(QPen(color, width, Qt.PenStyle.SolidLine,
+                  Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawEllipse(QPointF(0, 0), r, r)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(color)
+    p.drawEllipse(QPointF(0, 0), max(0.9, r * 0.34), max(0.9, r * 0.34))
+    p.restore()
+
+
+def draw_key(p: QPainter, rect: QRectF, color: QColor, width: float = 1.5) -> None:
+    """Chave pequena: argola à esquerda, haste na diagonal e dois dentes."""
+    x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+    p.setPen(QPen(color, width, Qt.PenStyle.SolidLine,
+                  Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    centro = QPointF(x + w * 0.26, y + h * 0.72)
+    raio = min(w, h) * 0.16
+    p.drawEllipse(centro, raio, raio)
+    ponta = QPointF(x + w * 0.88, y + h * 0.12)
+    p.drawLine(QPointF(centro.x() + raio * 0.72, centro.y() - raio * 0.72), ponta)
+    p.drawLine(QPointF(x + w * 0.66, y + h * 0.34), QPointF(x + w * 0.78, y + h * 0.46))
+    p.drawLine(QPointF(x + w * 0.78, y + h * 0.22), QPointF(x + w * 0.90, y + h * 0.34))
+
+
 def make_app_icon(theme: Theme) -> QIcon:
     icon = QIcon()
     for size in (16, 24, 32, 48, 64, 128, 256):
@@ -348,16 +711,27 @@ def make_app_icon(theme: Theme) -> QIcon:
         pm.fill(Qt.GlobalColor.transparent)
         p = QPainter(pm)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        art = theme.art
         grad = QLinearGradient(0, 0, size, size)
-        grad.setColorAt(0.0, C(theme.primary_from))
-        grad.setColorAt(1.0, C(theme.primary_pressed_to))
-        p.setPen(Qt.PenStyle.NoPen)
+        grad.setColorAt(0.0, C(art.logo_from or theme.primary_from))
+        if art.logo_mid:
+            grad.setColorAt(art.logo_mid_pos, C(art.logo_mid))
+        grad.setColorAt(1.0, C(art.logo_to or theme.primary_pressed_to))
+        p.setPen(QPen(C(art.logo_border), max(1.0, size * 0.012))
+                 if art.logo_border else Qt.PenStyle.NoPen)
         p.setBrush(QBrush(grad))
         p.drawRoundedRect(QRectF(0.5, 0.5, size - 1, size - 1), size * 0.24, size * 0.24)
-        glyph = size * 0.46
-        draw_sheet(p, QRectF((size - glyph * 0.86) / 2, (size - glyph) / 2,
-                             glyph * 0.86, glyph),
-                   C(theme.on_accent), max(1.0, size * 0.035))
+        if art.logo_motif == "sheet":
+            glyph = size * 0.46
+            draw_sheet(p, QRectF((size - glyph * 0.86) / 2, (size - glyph) / 2,
+                                 glyph * 0.86, glyph),
+                       C(theme.on_accent), max(1.0, size * 0.035))
+        else:
+            glyph = size * 0.56
+            draw_motif(p, QRectF((size - glyph) / 2, (size - glyph) / 2,
+                                 glyph, glyph),
+                       art.logo_motif, C(art.logo_fg or theme.on_accent),
+                       max(1.0, size * 0.035))
         p.end()
         icon.addPixmap(pm)
     return icon
@@ -370,7 +744,7 @@ def make_success_pixmap(theme: Theme, size: int = 44) -> QPixmap:
     p = QPainter(pm)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     fill = C(theme.ok_fg)
-    mark = C("#062338") if theme.key == "dark" else C("#FFFFFF")
+    mark = C("#062338") if theme.art.is_light else C("#FFFFFF")
     p.setPen(Qt.PenStyle.NoPen)
     p.setBrush(fill)
     p.drawEllipse(QRectF(1, 1, size - 2, size - 2))
@@ -524,23 +898,311 @@ class StarField(QWidget):
             grad.setColorAt(0.0, C(theme.bg_top))
             grad.setColorAt(1.0, C(theme.bg_bottom))
             p.fillRect(QRectF(0, 0, w, h), QBrush(grad))
-
-            if theme.glow_alpha:
-                glow = QColor(theme.glow)
-                glow.setAlpha(theme.glow_alpha)
-                radial = QRadialGradient(
-                    QPointF(w * 0.84, h * 0.01), max(w, h) * 0.9
-                )
-                radial.setColorAt(0.0, glow)
-                transparent = QColor(theme.glow)
-                transparent.setAlpha(0)
-                radial.setColorAt(1.0, transparent)
-                p.fillRect(QRectF(0, 0, w, h), QBrush(radial))
+            pattern = theme.art.pattern or ("stars" if theme.stars else "plain")
+            if pattern == "clouds":
+                self._paint_clouds(p, w, h)
+            elif pattern == "grain":
+                self._paint_grain(p, w, h)
+            elif pattern == "paper":
+                self._paint_paper(p, w, h)
+            elif pattern == "dotgrid":
+                self._paint_dotgrid(p, w, h)
+            else:
+                self._paint_atmosphere(p, w, h, theme)
+            if theme.key in _THEME_COVERS:
+                self._paint_theme_cover(p, w, h, theme.key)
         finally:
             p.end()
 
         self._bg_cache = pixmap
         return pixmap
+
+    def _paint_theme_cover(self, p: QPainter, w: float, h: float,
+                           key: str) -> None:
+        """Capa do tema saindo do cabeçalho, como camada de fundo.
+
+        Fica atrás de todo o conteúdo (o cartão e os campos são translúcidos),
+        com a opacidade do tema e máscara que dissolve as laterais e o pé.
+        """
+        spec = _THEME_COVERS.get(key)
+        if spec is None:
+            return
+        filename, base_size, opacity = spec
+        cover = theme_cover(filename)
+        if cover is None:
+            return
+        size = min(base_size, w * (base_size / 1280.0))
+        if size < 100.0:
+            return
+
+        dpr = self.devicePixelRatioF() or 1.0
+        layer = QPixmap(int(round(size * dpr)), int(round(size * dpr)))
+        layer.setDevicePixelRatio(dpr)
+        layer.fill(Qt.GlobalColor.transparent)
+
+        lp = QPainter(layer)
+        try:
+            lp.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            lp.setOpacity(opacity)
+            lp.drawPixmap(QRectF(0, 0, size, size), cover,
+                          QRectF(cover.rect()))
+
+            lp.setOpacity(1.0)
+            lp.setCompositionMode(
+                QPainter.CompositionMode.CompositionMode_DestinationIn)
+            vertical = QLinearGradient(0, 0, 0, size)
+            vertical.setColorAt(0.00, QColor(255, 255, 255, 255))
+            vertical.setColorAt(0.55, QColor(255, 255, 255, 235))
+            vertical.setColorAt(0.82, QColor(255, 255, 255, 120))
+            vertical.setColorAt(1.00, QColor(255, 255, 255, 0))
+            lp.fillRect(QRectF(0, 0, size, size), vertical)
+
+            horizontal = QLinearGradient(0, 0, size, 0)
+            horizontal.setColorAt(0.00, QColor(255, 255, 255, 0))
+            horizontal.setColorAt(0.28, QColor(255, 255, 255, 210))
+            horizontal.setColorAt(0.93, QColor(255, 255, 255, 255))
+            horizontal.setColorAt(1.00, QColor(255, 255, 255, 0))
+            lp.fillRect(QRectF(0, 0, size, size), horizontal)
+        finally:
+            lp.end()
+
+        # encostada na borda direita do conteúdo e no topo do cabeçalho
+        p.drawPixmap(QPointF(w - 20.0 - size, 44.0), layer)
+
+    # ── padrões de fundo dos temas secretos ─────────────────────────────────
+    @staticmethod
+    def _blob(p: QPainter, cx: float, cy: float, rx: float, ry: float,
+              color: str, alpha: int, stop: float = 0.7) -> None:
+        """Mancha elíptica com a mesma leitura do gradiente radial do CSS."""
+        if alpha <= 0 or rx <= 0 or ry <= 0:
+            return
+        p.save()
+        p.translate(cx, cy)
+        if abs(rx - ry) > 0.5:
+            p.scale(rx / ry, 1.0)
+        inner = QColor(color)
+        inner.setAlpha(alpha)
+        outer = QColor(color)
+        outer.setAlpha(0)
+        grad = QRadialGradient(QPointF(0, 0), ry)
+        grad.setColorAt(0.0, inner)
+        grad.setColorAt(stop, outer)
+        grad.setColorAt(1.0, outer)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(grad))
+        p.drawEllipse(QPointF(0, 0), ry, ry)
+        p.restore()
+
+    @staticmethod
+    def _radial(p: QPainter, cx: float, cy: float, radius: float,
+                color: str, alpha: int) -> None:
+        """Mancha radial suave (o “blur” do CSS, sem filtro caro)."""
+        if alpha <= 0 or radius <= 0:
+            return
+        inner = QColor(color)
+        inner.setAlpha(alpha)
+        outer = QColor(color)
+        outer.setAlpha(0)
+        grad = QRadialGradient(QPointF(cx, cy), radius)
+        grad.setColorAt(0.0, inner)
+        grad.setColorAt(1.0, outer)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(grad))
+        p.drawEllipse(QPointF(cx, cy), radius, radius)
+
+    def _paint_atmosphere(self, p: QPainter, w: float, h: float,
+                          theme: Theme) -> None:
+        if theme.glow_alpha:
+            glow = QColor(theme.glow)
+            glow.setAlpha(theme.glow_alpha)
+            radial = QRadialGradient(
+                QPointF(w * 0.84, h * 0.01), max(w, h) * 0.9
+            )
+            radial.setColorAt(0.0, glow)
+            transparent = QColor(theme.glow)
+            transparent.setAlpha(0)
+            radial.setColorAt(1.0, transparent)
+            p.fillRect(QRectF(0, 0, w, h), QBrush(radial))
+
+    def _paint_clouds(self, p: QPainter, w: float, h: float) -> None:
+        """Graduation: céu pastel, nuvens brancas e poeira de verão.
+
+        Camadas na mesma ordem do CSS: base do céu, lavagem pastel, nuvens e
+        orbes, e por fim a poeira branca.
+        """
+        # Lavagem lavanda no topo, depois os três brilhos que dão o clima
+        # (rosa à esquerda, azul-lavanda à direita, creme embaixo à direita).
+        self._blob(p, w * 0.55, -h * 0.08, w * 0.85, h * 0.44, "#C9B6F2", 120, 0.85)
+        self._blob(p, w * 0.68, h * 0.04, w * 0.25, h * 0.3125, "#F07BC0", 55, 0.80)
+        self._blob(p, w * 0.02, h * 0.02, w * 0.422, h * 0.542, "#E23E9E", 135, 0.72)
+        self._blob(p, w * 0.99, h * 0.00, w * 0.4375, h * 0.4896, "#8FA6F2", 170, 0.72)
+        self._blob(p, w * 0.72, h * 0.98, w * 0.367, h * 0.4375, "#FFC96B", 108, 0.72)
+        self._blob(p, w * 0.42, h * 0.30, w * 0.297, h * 0.229, "#FFFFFF", 70, 0.85)
+        rng = random.Random(7)
+        step = 118.0
+        p.setPen(Qt.PenStyle.NoPen)
+        y = 0.0
+        while y < h:
+            x = 0.0
+            while x < w:
+                for _ in range(3):
+                    px = x + rng.uniform(0, step)
+                    py = y + rng.uniform(0, step)
+                    p.setBrush(C("#FFFFFF", rng.randint(70, 150)))
+                    raio = rng.uniform(0.5, 1.1)
+                    p.drawEllipse(QPointF(px, py), raio, raio)
+                x += step
+            y += step
+
+    def _paint_grain(self, p: QPainter, w: float, h: float) -> None:
+        """Ozzy: palco preto, sangramento vermelho, morcego e scanlines."""
+        # .sky — base
+        self._blob(p, w * 0.84, -h * 0.12, 560, 400, "#920703", 120, 0.68)
+        self._blob(p, -w * 0.04, h * 0.24, 380, 280, "#920703", 41, 0.66)
+        self._blob(p, w * 0.12, h * 1.12, 380, 260, "#FBE500", 13, 0.68)
+        # .sky::before
+        self._blob(p, w * 0.12, h * 0.08, w * 0.42, h * 0.42, "#920703", 85, 0.70)
+        self._blob(p, w * 0.92, h * 0.74, w * 0.40, h * 0.40, "#920703", 58, 0.70)
+        self._blob(p, w * 0.55, h * 1.10, w * 0.40, h * 0.35, "#FBE500", 20, 0.70)
+        # orbes
+        self._blob(p, -w * 0.20, -h * 0.25, 390, 310, "#920703", 70, 0.68)
+        self._blob(p, w * 0.69, h * 0.75, 310, 260, "#920703", 50, 0.68)
+        self._blob(p, w * 0.73, -h * 0.19, 230, 180, "#FBE500", 15, 0.70)
+
+        # morcego: silhueta abstrata, quase invisível, atrás do conteúdo
+        p.save()
+        p.translate(w - 120, 120)
+        p.rotate(-6)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(C("#920703", 33))
+        asa = QPainterPath()
+        asa.moveTo(320, 85)
+        asa.cubicTo(268, 40, 166, 15, 12, 45)
+        asa.lineTo(64, 75)
+        asa.lineTo(26, 85)
+        asa.lineTo(90, 105)
+        asa.lineTo(51, 120)
+        asa.lineTo(141, 130)
+        asa.lineTo(115, 150)
+        asa.lineTo(218, 145)
+        asa.lineTo(230, 175)
+        asa.lineTo(320, 150)
+        asa.lineTo(410, 175)
+        asa.lineTo(422, 145)
+        asa.lineTo(525, 150)
+        asa.lineTo(499, 130)
+        asa.lineTo(589, 120)
+        asa.lineTo(550, 105)
+        asa.lineTo(614, 85)
+        asa.lineTo(576, 75)
+        asa.lineTo(628, 45)
+        asa.cubicTo(474, 15, 372, 40, 320, 85)
+        asa.closeSubpath()
+        p.drawPath(asa)
+        p.restore()
+
+        # scanlines de 1 px a cada 3 px
+        p.setPen(QPen(C("#FFFFFF", 7), 1))
+        y = 0.0
+        while y < h:
+            p.drawLine(QPointF(0, y), QPointF(w, y))
+            y += 3.0
+        edge = QLinearGradient(0, 0, w, 0)
+        edge.setColorAt(0.0, C("#920703", 140))
+        edge.setColorAt(0.58, C("#FBE500", 140))
+        edge.setColorAt(1.0, C("#920703", 140))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(edge))
+        p.drawRect(QRectF(0, 0, w, 2))
+
+    def _paint_paper(self, p: QPainter, w: float, h: float) -> None:
+        """Lana: papel marfim, blush e o disco de vinil ao fundo."""
+        # .sky — base
+        self._blob(p, w * 0.84, -h * 0.12, 450, 310, "#FFB1C1", 82, 0.68)
+        self._blob(p, w * 0.12, h * 1.12, 380, 260, "#FFDAD9", 97, 0.68)
+        # .sky::before
+        self._blob(p, w * 0.20, h * 0.12, w * 0.45, h * 0.45, "#FFB1C1", 85, 0.70)
+        self._blob(p, w * 0.86, h * 0.58, w * 0.42, h * 0.42, "#C81D3B", 26, 0.70)
+        self._blob(p, w * 0.30, h * 0.96, w * 0.45, h * 0.40, "#FFDAD9", 95, 0.70)
+        # véu morno que tira o branco do topo (papel envelhecido)
+        self._blob(p, w * 0.50, -h * 0.05, w * 0.95, h * 0.40, "#C9A8A8", 75, 0.85)
+        # orbes
+        self._blob(p, -w * 0.19, -h * 0.23, 340, 270, "#FFB1C1", 107, 0.68)
+        self._blob(p, w * 1.00, h * 0.62, w * 0.42, h * 0.42, "#C81D3B", 26, 0.78)
+        self._blob(p, w * 0.44, h * 0.31, 210, 190, "#FFDAD9", 112, 0.70)
+
+        # grão de papel: tile de 6 px repetido (barato e sem moiré)
+        dpr = p.device().devicePixelRatioF()
+        lado = max(1, int(round(6 * dpr)))
+        tile = QPixmap(lado, lado)
+        tile.setDevicePixelRatio(dpr)
+        tile.fill(Qt.GlobalColor.transparent)
+        tp = QPainter(tile)
+        tp.setRenderHint(QPainter.RenderHint.Antialiasing)
+        tp.setPen(Qt.PenStyle.NoPen)
+        tp.setBrush(C("#5B4040", 20))
+        tp.drawEllipse(QPointF(3, 3), 0.6, 0.6)
+        tp.end()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(tile))
+        p.drawRect(QRectF(0, 0, w, h))
+
+        # disco: anéis concêntricos + selo central
+        centro = QPointF(w * 0.906, h * 0.50)
+        externo = w * 0.226
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(C("#A10028", 18), 1))
+        raio = 22.0
+        while raio < externo:
+            p.drawEllipse(centro, raio, raio)
+            raio += 6.0
+        p.setPen(QPen(C("#A10028", 42), 1))
+        p.drawEllipse(centro, externo, externo)
+        p.setPen(QPen(C("#A10028", 40), 1))
+        p.drawEllipse(centro, externo * 0.252, externo * 0.252)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(C("#A10028", 10))
+        p.drawEllipse(centro, externo * 0.252, externo * 0.252)
+
+    def _paint_dotgrid(self, p: QPainter, w: float, h: float) -> None:
+        """Açaí: roxo profundo, grade de pontos e anel dourado."""
+        # .sky — base
+        self._blob(p, w * 0.84, -h * 0.12, 450, 310, "#7E22CE", 102, 0.68)
+        self._blob(p, -w * 0.04, h * 0.24, 380, 280, "#F59E0B", 23, 0.66)
+        self._blob(p, w * 0.12, h * 1.12, 380, 260, "#581C87", 77, 0.68)
+        # .sky::before
+        self._blob(p, w * 0.12, h * 0.10, w * 0.45, h * 0.45, "#7E22CE", 78, 0.70)
+        self._blob(p, w * 0.96, h * 0.12, w * 0.40, h * 0.40, "#F59E0B", 10, 0.70)
+        self._blob(p, w * 0.62, h * 1.08, w * 0.45, h * 0.40, "#581C87", 95, 0.70)
+        # orbes
+        self._blob(p, -w * 0.20, -h * 0.25, 380, 300, "#7E22CE", 107, 0.68)
+        self._blob(p, w * 0.70, h * 0.02, 260, 260, "#F59E0B", 36, 0.68)
+        self._blob(p, w * 0.07, h * 0.77, 310, 260, "#581C87", 55, 0.68)
+
+        # grade de pontos
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(C("#D8B4FE", 36))
+        step = 26.0
+        y = 13.0
+        while y < h:
+            x = 13.0
+            while x < w:
+                p.drawEllipse(QPointF(x, y), 0.55, 0.55)
+                x += step
+            y += step
+        # anéis dourados
+        centro = QPointF(w * 0.902, h * 0.353)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(C("#F59E0B", 46), 1))
+        p.drawEllipse(centro, w * 0.184, w * 0.184)
+        p.setPen(QPen(C("#C084FC", 23), 1))
+        p.drawEllipse(centro, w * 0.129, w * 0.129)
+
+    def set_reduced(self, reduced: bool) -> None:
+        """Liga/desliga a animação (preferência de acessibilidade)."""
+        self._reduced = bool(reduced)
+        self._sync_timer()
+        self.update()
 
     def paintEvent(self, event) -> None:
         theme = self._theme
@@ -606,10 +1268,35 @@ class Card(QFrame):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
 
-        fill = C(t.surface, int(t.surface_alpha * 255))
+        art = t.art
+        alpha = int((art.card_alpha or t.surface_alpha) * 255)
+        if art.card_from:
+            grad = QLinearGradient(0, rect.top(), 0, rect.bottom())
+            grad.setColorAt(0.0, C(art.card_from, alpha))
+            grad.setColorAt(1.0, C(art.card_to or art.card_from, alpha))
+            fill = QBrush(grad)
+        else:
+            fill = C(t.surface, alpha)
         p.setPen(QPen(C(t.border), 1))
         p.setBrush(fill)
         p.drawRoundedRect(rect, self._radius, self._radius)
+
+        if art.card_edge_height and art.card_edge_from:
+            edge = QLinearGradient(rect.left(), 0, rect.right(), 0)
+            edge.setColorAt(0.0, C(art.card_edge_from, art.card_edge_alpha))
+            edge.setColorAt(0.58, C(art.card_edge_to or art.card_edge_from,
+                                    art.card_edge_alpha))
+            edge.setColorAt(1.0, C(art.card_edge_from, art.card_edge_alpha))
+            p.save()
+            clip = QPainterPath()
+            clip.addRoundedRect(rect, self._radius, self._radius)
+            p.setClipPath(clip)
+            p.fillRect(
+                QRectF(rect.left(), rect.top(), rect.width(),
+                       float(art.card_edge_height)),
+                QBrush(edge),
+            )
+            p.restore()
 
 
 class Divider(QWidget):
@@ -648,21 +1335,34 @@ class LogoMark(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
 
+        art = t.art
+        from_color = art.logo_from or t.primary_from
+        to_color = art.logo_to or t.accent_pressed
         grad = QLinearGradient(0, 0, self.width(), self.height())
-        grad.setColorAt(0.0, C(t.primary_from))
-        grad.setColorAt(1.0, C(t.accent_pressed))
-        p.setPen(Qt.PenStyle.NoPen)
+        grad.setColorAt(0.0, C(from_color))
+        if art.logo_mid:
+            grad.setColorAt(art.logo_mid_pos, C(art.logo_mid))
+        grad.setColorAt(1.0, C(to_color))
+        if art.logo_border:
+            p.setPen(QPen(C(art.logo_border), 1))
+        else:
+            p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(grad))
         p.drawRoundedRect(rect, 9, 9)
 
-        # brilho superior sutil
+        # brilho superior sutil (mais discreto nos logos escuros)
+        brilho = (40 if art.is_light else 18) if art.logo_from else 40
         sheen = QLinearGradient(0, 0, 0, self.height())
-        sheen.setColorAt(0.0, C("#FFFFFF", 40))
+        sheen.setColorAt(0.0, C("#FFFFFF", brilho))
         sheen.setColorAt(0.55, C("#FFFFFF", 0))
         p.setBrush(QBrush(sheen))
         p.drawRoundedRect(rect, 9, 9)
 
-        draw_sheet(p, QRectF(8, 7.5, 14, 15), C(t.on_accent), 1.3)
+        if art.logo_motif == "sheet":
+            draw_sheet(p, QRectF(8, 7.5, 14, 15), C(t.on_accent), 1.3)
+        else:
+            draw_motif(p, QRectF(6.5, 5.8, 17.0, 18.4), art.logo_motif,
+                       C(art.logo_fg or t.on_accent), 1.25)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -712,6 +1412,7 @@ class PillButton(QAbstractButton):
 
     def paintEvent(self, event) -> None:
         t = self._theme
+        art = t.art
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
@@ -740,7 +1441,7 @@ class PillButton(QAbstractButton):
             p.setBrush(QBrush(sheen))
             p.drawRoundedRect(rect, radius, radius)
 
-            fg = C(t.on_accent, 255 if enabled else 120)
+            fg = C(art.primary_text or t.on_accent, 255 if enabled else 120)
         else:
             if not enabled:
                 fill, stroke, fg = C(t.surface_alt), C(t.border), C(t.text_muted, 140)
@@ -758,8 +1459,14 @@ class PillButton(QAbstractButton):
             p.setPen(QPen(ring, 1.5))
             p.drawRoundedRect(rect.adjusted(2.2, 2.2, -2.2, -2.2), radius - 2, radius - 2)
 
-        font = F(self.font_px, QFont.Weight.DemiBold
-                 if self.variant == "primary" else QFont.Weight.Medium)
+        familia = art.button_font or art.ui_font
+        font = F(
+            self.font_px,
+            QFont.Weight.DemiBold if self.variant == "primary" else QFont.Weight.Medium,
+            tracking=tracking_px(art.button_tracking, self.font_px),
+            family=familia,
+            caps=art.button_transform == "uppercase",
+        )
         p.setFont(font)
         fm = QFontMetrics(font)
         text = self.text()
@@ -775,6 +1482,8 @@ class PillButton(QAbstractButton):
                 draw_play(p, icon_rect, fg)
             elif self.glyph == "mail":
                 draw_mail(p, icon_rect, fg, 1.3)
+            elif self.glyph == "key":
+                draw_key(p, icon_rect, fg, 1.3)
             x += icon_w + gap
 
         p.setPen(fg)
@@ -785,12 +1494,17 @@ class PillButton(QAbstractButton):
 class IconButton(QAbstractButton):
     """Botão de ícone (selecionar pasta)."""
 
-    def __init__(self, glyph: str, tooltip: str, parent: QWidget | None = None) -> None:
+    def __init__(self, glyph: str, tooltip: str, parent: QWidget | None = None,
+                 compact: bool = False) -> None:
         super().__init__(parent)
         self._theme = DARK
         self.glyph = glyph
+        self.compact = compact
         self._hover = False
-        self.setFixedSize(36, 32)
+        if compact:
+            self.setFixedSize(24, 24)
+        else:
+            self.setFixedSize(36, 32)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setToolTip(tooltip)
@@ -830,21 +1544,41 @@ class IconButton(QAbstractButton):
             fill, stroke = C(t.surface_alt), C(t.accent)
         else:
             fill, stroke = C(t.surface, 235), C(t.border)
-        p.setPen(QPen(stroke, 1))
-        p.setBrush(fill)
-        p.drawRoundedRect(rect, 10, 10)
+        raio = 7 if self.compact else 10
+        if self.compact and not (self._hover or self.isDown()):
+            # fantasma: só o glifo, como na referência
+            pass
+        else:
+            p.setPen(QPen(stroke, 1))
+            p.setBrush(fill)
+            p.drawRoundedRect(rect, raio, raio)
 
         if self.hasFocus():
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.setPen(QPen(C(t.accent), 1.5))
-            p.drawRoundedRect(rect.adjusted(2.2, 2.2, -2.2, -2.2), 8, 8)
+            p.drawRoundedRect(rect.adjusted(2.2, 2.2, -2.2, -2.2),
+                              max(3, raio - 2), max(3, raio - 2))
 
         color = C(t.accent if self._hover else t.text_secondary)
+        if self.compact:
+            glyph_rect = QRectF(6.5, 6.5, 11, 11)
+            if self.glyph == "gear":
+                draw_gear(p, glyph_rect, color, 1.25)
+            elif self.glyph == "file":
+                draw_file(p, glyph_rect, color, 1.25)
+            elif self.glyph == "mail":
+                draw_mail(p, glyph_rect, color, 1.25)
+            else:
+                draw_folder(p, glyph_rect, color, 1.25)
+            return
+
         glyph_rect = QRectF(11, 9.5, 14, 13)
         if self.glyph == "file":
             draw_file(p, glyph_rect, color, 1.4)
         elif self.glyph == "mail":
             draw_mail(p, glyph_rect, color, 1.4)
+        elif self.glyph == "gear":
+            draw_gear(p, glyph_rect, color, 1.4)
         else:
             draw_folder(p, glyph_rect, color, 1.4)
 
@@ -875,7 +1609,7 @@ class ThemeToggle(QAbstractButton):
 
     def set_theme(self, theme: Theme) -> None:
         self._theme = theme
-        target = 1.0 if theme.key == "light" else 0.0
+        target = 1.0 if theme.art.is_light else 0.0
         if not self.isVisible() or self._pos == target:
             self._pos = target
             self.update()
@@ -917,13 +1651,18 @@ class ThemeToggle(QAbstractButton):
             inside = self.rect().contains(event.position().toPoint())
             target = self._pending
             self._pending = None
-            if inside and target != self._theme.key:
+            # Compara com o MODO atual, não com a key: um tema secreto tem key
+            # própria (graduation, ozzy…), mas pertence a um dos dois lados.
+            current_mode = "light" if self._theme.art.is_light else "dark"
+            if inside and target != current_mode:
                 self.theme_requested.emit(target)
         self.update()
 
     def keyPressEvent(self, event) -> None:
         if event.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self.theme_requested.emit("light" if self._theme.key == "dark" else "dark")
+            self.theme_requested.emit(
+                "dark" if self._theme.art.is_light else "light"
+            )
             return
         super().keyPressEvent(event)
 
@@ -942,18 +1681,26 @@ class ThemeToggle(QAbstractButton):
         x = 2 + self._pos * (self.width() - knob - 4)
         knob_rect = QRectF(x, 2, knob, knob)
         grad = QLinearGradient(0, knob_rect.top(), 0, knob_rect.bottom())
-        grad.setColorAt(0.0, C(t.accent_hover))
-        grad.setColorAt(1.0, C(t.accent))
+        grad.setColorAt(0.0, C(t.primary_from))
+        grad.setColorAt(1.0, C(t.primary_to))
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(grad))
         p.drawEllipse(knob_rect)
 
-        # ícones
-        moon_color = C(t.on_accent) if self._pos < 0.5 else C(t.text_muted)
-        sun_color = C(t.on_accent) if self._pos >= 0.5 else C(t.text_muted)
-        draw_moon(p, QPointF(x + knob / 2 + 0.6, self.height() / 2), 5.4, moon_color)
-        draw_sun(p, QPointF(2 + (self.width() - 4) - knob / 2 - 0.6, self.height() / 2),
-                 5.0, sun_color)
+        # ícones em posições fixas: a lua mora à esquerda, o sol à direita;
+        # só a cor muda com o lado ativo (antes eles seguiam o botão e a lua
+        # sumia no tema claro).
+        ativo = C(t.art.primary_text or t.on_accent)
+        inativo = C(t.text_muted)
+        centro_knob = x + knob / 2
+        if self._pos < 0.5:
+            # lua viaja com o botão; sol fica apagado no lugar dele
+            draw_moon(p, QPointF(centro_knob + 0.6, self.height() / 2), 5.4, ativo)
+            draw_sun(p, QPointF(self.width() - 2 - knob / 2 - 0.6,
+                                self.height() / 2), 5.0, inativo)
+        else:
+            draw_moon(p, QPointF(2 + knob / 2 + 0.6, self.height() / 2), 5.4, inativo)
+            draw_sun(p, QPointF(centro_knob - 0.6, self.height() / 2), 5.0, ativo)
 
         if self.hasFocus():
             p.setBrush(Qt.BrushStyle.NoBrush)
@@ -1057,9 +1804,9 @@ class SegmentedControl(QWidget):
         t = self._theme
         for button in self._buttons:
             checked = button.isChecked()
-            color = t.on_accent if checked else t.text_secondary
+            color = (t.art.seg_active_fg or t.on_accent) if checked else t.text_secondary
             weight = QFont.Weight.DemiBold if checked else QFont.Weight.Normal
-            button.setFont(F(11, weight))
+            button.setFont(F(11, weight, family=t.art.ui_font))
             button.setStyleSheet(
                 "QPushButton { background: transparent; border: none;"
                 f" color: {color}; padding: 0px; }}"
@@ -1092,10 +1839,13 @@ class SegmentedControl(QWidget):
         seg_w = (self.width() - 4) / count
         x = 2 + self._pos * seg_w
         pill = QRectF(x + 1, 2, seg_w - 2, self.height() - 4)
+        art = t.art
+        topo = art.seg_active_from or t.primary_from
+        base = art.seg_active_to or t.primary_to
         grad = QLinearGradient(0, pill.top(), 0, pill.bottom())
-        grad.setColorAt(0.0, C(t.primary_from))
-        grad.setColorAt(1.0, C(t.primary_to))
-        p.setPen(Qt.PenStyle.NoPen)
+        grad.setColorAt(0.0, C(topo))
+        grad.setColorAt(1.0, C(base))
+        p.setPen(QPen(C(art.seg_active_border or topo), 1))
         p.setBrush(QBrush(grad))
         p.drawRoundedRect(pill, 7, 7)
 
@@ -1166,7 +1916,7 @@ class OptionPopup(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         panel = self._panel()
 
-        shadow = QColor(6, 18, 32, 70 if t.key == "dark" else 30)
+        shadow = QColor(6, 18, 32, 30 if t.art.is_light else 70)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(shadow)
         p.drawRoundedRect(panel.adjusted(0, 2, 0, 4), 11, 11)
@@ -1175,7 +1925,7 @@ class OptionPopup(QWidget):
         p.setBrush(C(t.surface_alt, 252))
         p.drawRoundedRect(panel, 10, 10)
 
-        p.setFont(F(11))
+        p.setFont(F(11, family=t.art.ui_font))
         for index, option in enumerate(self._options):
             row = self._row_rect(index)
             if index == self._hover:
@@ -1188,7 +1938,7 @@ class OptionPopup(QWidget):
                 p.setBrush(Qt.BrushStyle.NoBrush)
                 p.drawRoundedRect(row.adjusted(0.7, 0.7, -0.7, -0.7), 7, 7)
                 draw_check(p, QRectF(row.right() - 22, row.center().y() - 6, 11, 12),
-                           C(t.accent_soft_text if t.key == "light" else t.accent), 1.5)
+                           C(t.accent_soft_text if t.art.is_light else t.accent), 1.5)
             p.setPen(C(t.text if index == self._hover else t.text_secondary))
             p.drawText(row.adjusted(12, 0, -26, 0),
                        int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), option)
@@ -1287,7 +2037,7 @@ class SelectField(QAbstractButton):
         p.setBrush(C(t.field_focus if active else t.field_bg))
         p.drawRoundedRect(rect, 10, 10)
 
-        font = F(11)
+        font = F(11, family=t.art.ui_font)
         p.setFont(font)
         fm = QFontMetrics(font)
         text = fm.elidedText(self._value, Qt.TextElideMode.ElideRight,
@@ -1376,13 +2126,18 @@ class StatusBar(QWidget):
 
     def _colors(self) -> tuple[QColor, QColor, bool]:
         t = self._theme
+        art = t.art
         if self._state == "ok":
             return C(t.ok_bg), C(t.ok_fg), False
         if self._state == "erro":
             return C(t.err_bg), C(t.err_fg), False
         if self._state == "aviso":
             return C(t.warn_bg), C(t.warn_fg), False
-        return C(t.surface_alt, 190), C(t.text_secondary), True
+        return (
+            C(art.status_bg or t.surface_alt, 190),
+            C(art.status_fg or t.text_secondary),
+            True,
+        )
 
     def paintEvent(self, event) -> None:
         t = self._theme
@@ -1390,13 +2145,15 @@ class StatusBar(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         bg, fg, bordered = self._colors()
+        art = t.art
 
-        p.setPen(QPen(C(t.border), 1) if bordered else Qt.PenStyle.NoPen)
+        p.setPen(QPen(C(art.status_border or t.border), 1)
+                 if bordered else Qt.PenStyle.NoPen)
         p.setBrush(bg)
         p.drawRoundedRect(rect, 10, 10)
 
         cy = self.height() / 2
-        dot_color = fg if not bordered else C(t.accent)
+        dot_color = fg if not bordered else C(art.status_dot or t.accent)
         halo = QColor(dot_color)
         halo.setAlpha(30)
         p.setPen(Qt.PenStyle.NoPen)
@@ -1405,7 +2162,12 @@ class StatusBar(QWidget):
         p.setBrush(dot_color)
         p.drawEllipse(QPointF(14, cy), 3.1, 3.1)
 
-        font = F(11)
+        font = F(
+            art.status_size,
+            family=art.status_font or art.ui_font,
+            tracking=tracking_px(art.status_tracking, art.status_size),
+            caps=art.status_transform == "uppercase",
+        )
         p.setFont(font)
         fm = QFontMetrics(font)
         right_pad = 34 if self._busy else 14
@@ -1618,7 +2380,7 @@ class ViewSwitch(QWidget):
         t = self._theme
         for index, button in enumerate(self._buttons):
             if button.isChecked():
-                color = t.accent_soft_text
+                color = t.art.view_active_fg or t.accent_soft_text
                 weight = QFont.Weight.DemiBold
             elif index == self._hover:
                 color = t.text
@@ -1626,7 +2388,7 @@ class ViewSwitch(QWidget):
             else:
                 color = t.text_secondary
                 weight = QFont.Weight.Medium
-            button.setFont(F(11, weight))
+            button.setFont(F(11, weight, family=t.art.ui_font))
             button.setStyleSheet(
                 "QPushButton { background: transparent; border: none;"
                 f" color: {color}; padding: 0px; }}"
@@ -1657,12 +2419,22 @@ class ViewSwitch(QWidget):
 
         # polegar da tela ativa: mancha de acento, desliza entre as opções
         thumb = self._segment_rect(self._pos)
+        art = t.art
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(C(t.accent, 22))
+        p.setBrush(C(art.view_active_from or t.accent, 22))
         p.drawRoundedRect(thumb.adjusted(-2.0, -1.0, 2.0, 1.0),
                           thumb.height() / 2 + 1, thumb.height() / 2 + 1)
-        p.setPen(QPen(C(t.accent, 135), 1))
-        p.setBrush(C(t.accent_soft, 255))
+        if art.view_active_from:
+            grad = QLinearGradient(thumb.topLeft(), thumb.bottomRight())
+            grad.setColorAt(0.0, C(art.view_active_from))
+            grad.setColorAt(1.0, C(art.view_active_to or art.view_active_from))
+            brush = QBrush(grad)
+        else:
+            brush = C(t.accent_soft, 255)
+        borda_vs = C(art.view_active_border or t.accent,
+                     255 if art.view_active_border else 135)
+        p.setPen(QPen(borda_vs, 1))
+        p.setBrush(brush)
         p.drawRoundedRect(thumb, thumb.height() / 2, thumb.height() / 2)
 
         # foco por teclado: um anel discreto na opção que está com o foco
@@ -2463,48 +3235,795 @@ class EnvioPage(QWidget):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  CONFIGURAÇÕES
+# ══════════════════════════════════════════════════════════════════════════════
+class GlyphBadge(QWidget):
+    """Quadrado com o glifo de chave (cabeçalho da aba de código)."""
+
+    def __init__(self, parent: QWidget | None = None, size: int = 38) -> None:
+        super().__init__(parent)
+        self._theme = DARK
+        self.setFixedSize(size, size)
+
+    def set_theme(self, theme: Theme) -> None:
+        self._theme = theme
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        t = self._theme
+        art = t.art
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
+        p.setPen(QPen(C(art.badge_border or t.border), 1))
+        p.setBrush(C(art.badge_bg or t.accent_soft))
+        p.drawRoundedRect(rect, 12, 12)
+        draw_key(p, QRectF(self.width() * 0.24, self.height() * 0.24,
+                           self.width() * 0.52, self.height() * 0.52),
+                 C(art.badge_fg or t.accent_soft_text), 1.4)
+
+
+class CloseButton(QAbstractButton):
+    """Botão de fechar desenhado (sem depender de fonte/emoji)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._theme = DARK
+        self._hover = False
+        self.setFixedSize(30, 30)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setToolTip("Fechar")
+        self.setAccessibleName("Fechar")
+
+    def set_theme(self, theme: Theme) -> None:
+        self._theme = theme
+        self.update()
+
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return,
+                           Qt.Key.Key_Enter):
+            self.click()
+            return
+        super().keyPressEvent(event)
+
+    def paintEvent(self, event) -> None:
+        t = self._theme
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        p.setPen(QPen(C(t.accent if self._hover else t.border), 1))
+        p.setBrush(C(t.surface_alt if self._hover else t.surface))
+        p.drawRoundedRect(rect, 8, 8)
+        if self.hasFocus():
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(C(t.accent), 1.4))
+            p.drawRoundedRect(rect.adjusted(2, 2, -2, -2), 6, 6)
+        p.setPen(QPen(C(t.text if self._hover else t.text_secondary), 1.6,
+                      Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        w, h = self.width(), self.height()
+        p.drawLine(QPointF(w * 0.36, h * 0.36), QPointF(w * 0.64, h * 0.64))
+        p.drawLine(QPointF(w * 0.64, h * 0.36), QPointF(w * 0.36, h * 0.64))
+
+
+class ThemeCard(QAbstractButton):
+    """Cartão de tema na aba Aparência (desenhado, não QSS)."""
+
+    def __init__(self, theme: Theme, active: bool = False,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._theme = theme
+        self._active = active
+        self._hover = False
+        self.setFixedHeight(74)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName(f"Tema {theme.label}")
+
+    def set_active(self, active: bool) -> None:
+        self._active = active
+        self.update()
+
+    def set_theme(self, theme: Theme) -> None:
+        self._theme = theme
+        self.update()
+
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event) -> None:
+        t = self._theme
+        art = t.art
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+
+        destaque = self._active or self._hover
+        p.setPen(QPen(C(t.accent if destaque else t.border), 1))
+        p.setBrush(C(t.accent_soft if self._active else t.bg_top))
+        p.drawRoundedRect(rect, 12, 12)
+
+        # barra de acento à esquerda quando ativo
+        if self._active:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(C(t.accent))
+            p.drawRoundedRect(QRectF(rect.left() + 1, rect.top() + 14, 3,
+                                     rect.height() - 28), 1.5, 1.5)
+
+        if self.hasFocus():
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(C(t.accent), 1.4))
+            p.drawRoundedRect(rect.adjusted(2, 2, -2, -2), 10, 10)
+
+        nome_font = F(14, QFont.Weight.DemiBold, family=art.ui_font)
+        p.setFont(nome_font)
+        p.setPen(C(t.text))
+        nome = QFontMetrics(nome_font).elidedText(
+            self._theme.label, Qt.TextElideMode.ElideRight,
+            int(rect.width() - 92))
+        p.drawText(QRectF(rect.left() + 15, rect.top() + 7, rect.width() - 88, 21),
+                   int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                       | Qt.TextFlag.TextDontClip),
+                   nome)
+
+        descricao = art.description or {
+            "dark": "Céu noturno azul-marinho, com estrelas que respiram.",
+            "light": "Céu diurno, com destaque em azul-celeste.",
+        }.get(self._theme.key, "")
+        p.setFont(F(9, family=art.ui_font))
+        p.setPen(C(t.text_secondary))
+        p.drawText(QRectF(rect.left() + 17, rect.top() + 31, rect.width() - 34,
+                          rect.height() - 39),
+                   int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+                       | Qt.TextFlag.TextWordWrap),
+                   descricao)
+
+        if self._active:
+            pill_font = F(8, QFont.Weight.Bold, tracking=0.7, family=art.ui_font)
+            fm = QFontMetrics(pill_font)
+            largura = fm.horizontalAdvance("ATIVO") + 16
+            pill = QRectF(rect.right() - largura - 12, rect.top() + 8, largura, 18)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(C(t.accent))
+            p.drawRoundedRect(pill, 9, 9)
+            p.setFont(pill_font)
+            p.setPen(C(t.on_accent))
+            p.drawText(pill, int(Qt.AlignmentFlag.AlignCenter), "ATIVO")
+
+
+class DragBar(QWidget):
+    """Cabeçalho arrastável de uma janela sem moldura."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._offset: QPoint | None = None
+        self.setCursor(Qt.CursorShape.SizeAllCursor)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._offset = event.globalPosition().toPoint() - self.window().frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.window().move(event.globalPosition().toPoint() - self._offset)
+            event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._offset = None
+        event.accept()
+
+
+class SettingsDialog(QDialog):
+    """Configurações do app: Geral, Aparência, Inserir código e Sobre."""
+
+    theme_selected = pyqtSignal(str)
+    theme_unlocked = pyqtSignal(str)
+    reduced_changed = pyqtSignal(bool)
+    forget_requested = pyqtSignal()
+
+    def __init__(self, theme: Theme, settings: QSettings,
+                 unlocked: set[str], reduced: bool = False,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._theme = theme
+        self._settings = settings
+        self._unlocked = set(unlocked)
+        self._reduced = bool(reduced)
+        self._cards: list[ThemeCard] = []
+
+        self.setObjectName("SettingsDialog")
+        self.setWindowTitle("Configurações")
+        self.setModal(True)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setMinimumSize(720, 560)
+        self.resize(760, 600)
+
+        self._build()
+        self.set_theme(theme)
+        self._refresh_cards()
+
+    # ── construção ──────────────────────────────────────────────────────────
+    def _build(self) -> None:
+        externo = QVBoxLayout(self)
+        externo.setContentsMargins(12, 12, 12, 12)
+        externo.setSpacing(0)
+
+        self.shell = QFrame(self)
+        self.shell.setObjectName("SettingsShell")
+        externo.addWidget(self.shell)
+        sombra = QGraphicsDropShadowEffect(self.shell)
+        sombra.setBlurRadius(48)
+        sombra.setOffset(0, 18)
+        sombra.setColor(QColor(0, 0, 0, 120))
+        self.shell.setGraphicsEffect(sombra)
+
+        corpo = QVBoxLayout(self.shell)
+        corpo.setContentsMargins(24, 18, 24, 16)
+        corpo.setSpacing(0)
+
+        # cabeçalho
+        self.head = DragBar(self.shell)
+        self.head.setFixedHeight(74)
+        head_lay = QHBoxLayout(self.head)
+        head_lay.setContentsMargins(0, 0, 0, 0)
+        head_lay.setSpacing(12)
+
+        titulos = QVBoxLayout()
+        titulos.setContentsMargins(0, 0, 0, 0)
+        titulos.setSpacing(2)
+        self.lbl_eyebrow = QLabel("PAGFLOW · AJUSTES", self.head)
+        self.lbl_eyebrow.setObjectName("SettingsEyebrow")
+        self.lbl_title = QLabel("Configurações", self.head)
+        self.lbl_title.setObjectName("SettingsTitle")
+        self.lbl_sub = QLabel("Ajustes do aplicativo", self.head)
+        self.lbl_sub.setObjectName("SettingsSub")
+        titulos.addWidget(self.lbl_eyebrow)
+        titulos.addWidget(self.lbl_title)
+        titulos.addWidget(self.lbl_sub)
+        head_lay.addLayout(titulos, 1)
+
+        self.btn_close = CloseButton(self.head)
+        self.btn_close.clicked.connect(self.reject)
+        head_lay.addWidget(self.btn_close, 0, Qt.AlignmentFlag.AlignTop)
+        corpo.addWidget(self.head)
+        corpo.addSpacing(8)
+
+        # abas
+        abas = QWidget(self.shell)
+        abas.setFixedHeight(34)
+        abas_lay = QHBoxLayout(abas)
+        abas_lay.setContentsMargins(0, 0, 0, 4)
+        abas_lay.setSpacing(6)
+        self._tab_group = QButtonGroup(self)
+        self._tab_group.setExclusive(True)
+        self._tabs: list[QPushButton] = []
+        for indice, texto in enumerate(("Geral", "Aparência", "Inserir código", "Sobre")):
+            botao = QPushButton(texto, abas)
+            botao.setObjectName("SettingsTab")
+            botao.setCheckable(True)
+            botao.setCursor(Qt.CursorShape.PointingHandCursor)
+            botao.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            botao.setFlat(True)
+            self._tab_group.addButton(botao, indice)
+            abas_lay.addWidget(botao, 0)
+            self._tabs.append(botao)
+        abas_lay.addStretch(1)
+        self._tabs[2].setChecked(True)
+        corpo.addWidget(abas)
+
+        # páginas
+        self.pages = QStackedWidget(self.shell)
+        self.pages.addWidget(self._page_geral())
+        self.pages.addWidget(self._page_aparencia())
+        self.pages.addWidget(self._page_codigo())
+        self.pages.addWidget(self._page_sobre())
+        self.pages.setCurrentIndex(2)
+        self._tab_group.idClicked.connect(self.pages.setCurrentIndex)
+        corpo.addWidget(self.pages, 1)
+
+        # rodapé
+        corpo.addSpacing(8)
+        self.footer_divider = Divider(self.shell)
+        corpo.addWidget(self.footer_divider)
+        corpo.addSpacing(8)
+        rodape = QHBoxLayout()
+        rodape.setContentsMargins(0, 0, 0, 0)
+        rodape.setSpacing(10)
+        nota = QLabel("As alterações são aplicadas na hora.", self.shell)
+        nota.setObjectName("Hint")
+        rodape.addWidget(nota, 0)
+        rodape.addStretch(1)
+        self.btn_fechar = PillButton("Fechar", "secondary", width=108,
+                                     parent=self.shell)
+        self.btn_fechar.clicked.connect(self.accept)
+        rodape.addWidget(self.btn_fechar, 0)
+        corpo.addLayout(rodape)
+
+    # ── páginas ─────────────────────────────────────────────────────────────
+    def _page_geral(self) -> QWidget:
+        pagina = QWidget(self.shell)
+        lay = QVBoxLayout(pagina)
+        lay.setContentsMargins(0, 14, 0, 0)
+        lay.setSpacing(10)
+
+        self._eyebrow_geral = self._eyebrow("PREFERÊNCIAS", pagina)
+        lay.addWidget(self._eyebrow_geral)
+        self._title_geral = self._titulo("Geral", pagina)
+        lay.addWidget(self._title_geral)
+        lay.addWidget(self._copy(
+            "Preferências básicas do aplicativo. Nada aqui altera o "
+            "processamento dos relatórios.", pagina))
+
+        card = QFrame(pagina)
+        card.setObjectName("SettingsCard")
+        card_lay = QVBoxLayout(card)
+        card_lay.setContentsMargins(16, 14, 16, 14)
+        card_lay.setSpacing(10)
+
+        linha = QHBoxLayout()
+        linha.setSpacing(10)
+        textos = QVBoxLayout()
+        textos.setSpacing(1)
+        nome = QLabel("Animações", card)
+        nome.setObjectName("SelectionLabel")
+        nome.setFont(F(11, QFont.Weight.DemiBold))
+        detalhe = QLabel("As estrelas do tema escuro ficam estáticas.", card)
+        detalhe.setObjectName("Hint")
+        textos.addWidget(nome)
+        textos.addWidget(detalhe)
+        linha.addLayout(textos, 1)
+        self.check_reduzir = CheckBox("Reduzir animações", card)
+        self.check_reduzir.setChecked(self._reduced)
+        self.check_reduzir.toggled.connect(self._on_reduced)
+        linha.addWidget(self.check_reduzir, 0)
+        card_lay.addLayout(linha)
+
+        divisor = QFrame(card)
+        divisor.setObjectName("CodeDivider")
+        divisor.setFixedHeight(1)
+        card_lay.addWidget(divisor)
+
+        versao = QLabel(f"PagFlow Excel · versão {APP_VERSION}", card)
+        versao.setObjectName("Hint")
+        card_lay.addWidget(versao)
+
+        lay.addWidget(card)
+        lay.addStretch(1)
+        return pagina
+
+    def _page_aparencia(self) -> QWidget:
+        pagina = QWidget(self.shell)
+        lay = QVBoxLayout(pagina)
+        lay.setContentsMargins(0, 10, 0, 0)
+        lay.setSpacing(8)
+
+        self._eyebrow_ap = self._eyebrow("APARÊNCIA", pagina)
+        lay.addWidget(self._eyebrow_ap)
+        self._title_ap = self._titulo("Temas", pagina)
+        lay.addWidget(self._title_ap)
+        lay.addWidget(self._copy(
+            "Escuro e claro são os temas principais. Os temas secretos "
+            "aparecem aqui só depois de desbloqueados por código.", pagina))
+
+        self.grid = QGridLayout()
+        self.grid.setContentsMargins(0, 2, 0, 0)
+        self.grid.setHorizontalSpacing(12)
+        self.grid.setVerticalSpacing(8)
+
+        # A grade rola quando a tela é baixa (o diálogo pode encolher até 560).
+        rolagem = QScrollArea(pagina)
+        rolagem.setWidgetResizable(True)
+        rolagem.setFrameShape(QFrame.Shape.NoFrame)
+        rolagem.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        rolagem.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollArea > QWidget > QWidget { background: transparent; }")
+        interno = QWidget(rolagem)
+        interno_lay = QVBoxLayout(interno)
+        interno_lay.setContentsMargins(0, 0, 0, 0)
+        interno_lay.setSpacing(0)
+        interno_lay.addLayout(self.grid)
+        interno_lay.addStretch(1)
+        rolagem.setWidget(interno)
+        lay.addWidget(rolagem, 1)
+
+        lay.addSpacing(4)
+        rodape = QHBoxLayout()
+        rodape.setSpacing(10)
+        self.btn_restaurar = PillButton("Restaurar padrão PagFlow", "primary",
+                                        width=230, parent=pagina)
+        self.btn_restaurar.setToolTip("Voltar ao tema escuro original do PagFlow")
+        self.btn_restaurar.clicked.connect(lambda: self.theme_selected.emit("dark"))
+        rodape.addWidget(self.btn_restaurar, 0)
+        dica = QLabel("Devolve o visual original. Os temas desbloqueados continuam "
+                      "disponíveis.", pagina)
+        dica.setObjectName("Hint")
+        dica.setWordWrap(True)
+        rodape.addWidget(dica, 1)
+        lay.addLayout(rodape)
+        return pagina
+
+    def _page_codigo(self) -> QWidget:
+        pagina = QWidget(self.shell)
+        lay = QVBoxLayout(pagina)
+        lay.setContentsMargins(0, 14, 0, 0)
+        lay.setSpacing(0)
+
+        colunas = QHBoxLayout()
+        colunas.setContentsMargins(0, 0, 0, 0)
+        colunas.setSpacing(16)
+
+        card = QFrame(pagina)
+        card.setObjectName("SettingsCard")
+        card_lay = QVBoxLayout(card)
+        card_lay.setContentsMargins(18, 16, 18, 16)
+        card_lay.setSpacing(0)
+
+        head = QHBoxLayout()
+        head.setSpacing(12)
+        self.badge = GlyphBadge(card)
+        head.addWidget(self.badge, 0, Qt.AlignmentFlag.AlignTop)
+        titulos = QVBoxLayout()
+        titulos.setSpacing(1)
+        self.lbl_code_eyebrow = QLabel("ACESSO RESTRITO", card)
+        self.lbl_code_eyebrow.setObjectName("CodeEyebrow")
+        self.lbl_code_title = QLabel("Ativar um tema pelo código", card)
+        self.lbl_code_title.setObjectName("CodeTitle")
+        self.lbl_code_title.setWordWrap(True)
+        titulos.addWidget(self.lbl_code_eyebrow)
+        titulos.addWidget(self.lbl_code_title)
+        head.addLayout(titulos, 1)
+        card_lay.addLayout(head)
+        card_lay.addSpacing(10)
+
+        self.lbl_code_copy = QLabel(
+            "Digite o nome de um tema para desbloqueá-lo e aplicá-lo agora. "
+            "Os códigos não aparecem em nenhuma lista.", card)
+        self.lbl_code_copy.setObjectName("CodeCopy")
+        self.lbl_code_copy.setWordWrap(True)
+        card_lay.addWidget(self.lbl_code_copy)
+        card_lay.addSpacing(14)
+
+        self.lbl_code_label = QLabel("CÓDIGO DO TEMA", card)
+        self.lbl_code_label.setObjectName("CodeLabel")
+        card_lay.addWidget(self.lbl_code_label)
+        card_lay.addSpacing(6)
+
+        linha = QHBoxLayout()
+        linha.setSpacing(8)
+        self.code_input = QLineEdit(card)
+        self.code_input.setObjectName("Field")
+        self.code_input.setFixedHeight(36)
+        self.code_input.setPlaceholderText("Digite o nome do tema")
+        self.code_input.setAccessibleName("Código do tema")
+        self.code_input.returnPressed.connect(self._activate_code)
+        linha.addWidget(self.code_input, 1)
+        self.btn_ativar = PillButton("Ativar tema", "primary", glyph="key",
+                                     width=142, height=36, parent=card)
+        self.btn_ativar.clicked.connect(self._activate_code)
+        linha.addWidget(self.btn_ativar, 0)
+        card_lay.addLayout(linha)
+        card_lay.addSpacing(10)
+
+        self.feedback = QLabel(card)
+        self.feedback.setWordWrap(True)
+        self.feedback.setTextFormat(Qt.TextFormat.RichText)
+        self.feedback.setVisible(False)
+        card_lay.addWidget(self.feedback)
+
+        card_lay.addStretch(1)
+
+        atual = QHBoxLayout()
+        atual.setSpacing(8)
+        self.lbl_current = QLabel("TEMA ATUAL", card)
+        self.lbl_current.setObjectName("CurrentLabel")
+        self.pill_current = QLabel(card)
+        self.pill_current.setObjectName("ThemePill")
+        atual.addWidget(self.lbl_current, 0)
+        atual.addStretch(1)
+        atual.addWidget(self.pill_current, 0)
+        card_lay.addLayout(atual)
+
+        colunas.addWidget(card, 148)
+
+        aside = QFrame(pagina)
+        aside.setObjectName("SettingsAside")
+        aside_lay = QVBoxLayout(aside)
+        aside_lay.setContentsMargins(16, 16, 16, 16)
+        aside_lay.setSpacing(8)
+        self.lbl_aside_title = QLabel("COMO FUNCIONA", aside)
+        self.lbl_aside_title.setObjectName("AsideTitle")
+        aside_lay.addWidget(self.lbl_aside_title)
+        for texto in (
+            "Maiúsculas, acentos e espaços são ignorados.",
+            "O tema fica salvo e volta na próxima abertura.",
+            "Os códigos não aparecem em nenhuma lista.",
+        ):
+            item = QLabel(f"•  {texto}", aside)
+            item.setObjectName("AsideItem")
+            item.setWordWrap(True)
+            aside_lay.addWidget(item)
+        aside_lay.addStretch(1)
+        self.lbl_aside_note = QLabel(
+            "Feature quase secreta. Nenhum tema é listado antes de ser ativado.",
+            aside)
+        self.lbl_aside_note.setObjectName("AsideNote")
+        self.lbl_aside_note.setWordWrap(True)
+        aside_lay.addWidget(self.lbl_aside_note)
+
+        colunas.addWidget(aside, 82)
+        lay.addLayout(colunas, 1)
+        return pagina
+
+    def _page_sobre(self) -> QWidget:
+        pagina = QWidget(self.shell)
+        lay = QVBoxLayout(pagina)
+        lay.setContentsMargins(0, 14, 0, 0)
+        lay.setSpacing(10)
+
+        self._eyebrow_sobre = self._eyebrow("SOBRE", pagina)
+        lay.addWidget(self._eyebrow_sobre)
+        self._title_sobre = self._titulo("PagFlow Excel", pagina)
+        lay.addWidget(self._title_sobre)
+        lay.addWidget(self._copy(
+            "Consolidação de pagamentos SAP. Lê extratos FBL1N e REL_LOG, "
+            "gera o .xlsx formatado e envia os relatórios pelo Outlook.", pagina))
+
+        card = QFrame(pagina)
+        card.setObjectName("SettingsCard")
+        card_lay = QVBoxLayout(card)
+        card_lay.setContentsMargins(16, 14, 16, 14)
+        card_lay.setSpacing(6)
+        for rotulo, valor in (
+            ("Versão", APP_VERSION),
+            ("Feito por", "Gustavo Pinheiro"),
+            ("Tecnologia", "PyQt6 · pandas · openpyxl"),
+        ):
+            linha = QHBoxLayout()
+            nome = QLabel(rotulo, card)
+            nome.setObjectName("Hint")
+            nome.setFixedWidth(96)
+            dado = QLabel(valor, card)
+            dado.setObjectName("SelectionLabel")
+            linha.addWidget(nome, 0)
+            linha.addWidget(dado, 1)
+            card_lay.addLayout(linha)
+        lay.addWidget(card)
+        lay.addStretch(1)
+
+        esquece = QHBoxLayout()
+        esquece.setSpacing(10)
+        self.btn_esquecer = PillButton("Esquecer temas desbloqueados", "secondary",
+                                       width=250, parent=pagina)
+        self.btn_esquecer.clicked.connect(self._forget)
+        esquece.addWidget(self.btn_esquecer, 0)
+        nota = QLabel("Os temas secretos voltam a ficar ocultos. O tema atual "
+                      "volta ao escuro.", pagina)
+        nota.setObjectName("Hint")
+        nota.setWordWrap(True)
+        esquece.addWidget(nota, 1)
+        lay.addLayout(esquece)
+        return pagina
+
+    # ── utilidades de construção ────────────────────────────────────────────
+    def _eyebrow(self, texto: str, parent: QWidget) -> QLabel:
+        label = QLabel(texto, parent)
+        label.setObjectName("CodeEyebrow")
+        return label
+
+    def _titulo(self, texto: str, parent: QWidget) -> QLabel:
+        label = QLabel(texto, parent)
+        label.setObjectName("CodeTitle")
+        return label
+
+    def _copy(self, texto: str, parent: QWidget) -> QLabel:
+        label = QLabel(texto, parent)
+        label.setObjectName("CodeCopy")
+        label.setWordWrap(True)
+        return label
+
+    # ── tema ────────────────────────────────────────────────────────────────
+    def set_theme(self, theme: Theme) -> None:
+        self._theme = theme
+        art = theme.art
+        self.lbl_title.setFont(
+            F(art.dialog_title_size, QFont.Weight.DemiBold,
+              tracking=tracking_px(art.brand_tracking, art.dialog_title_size),
+              family=art.display_font))
+        self.lbl_eyebrow.setFont(
+            F(9, QFont.Weight.Bold, tracking=1.3,
+              family=art.meta_font or art.ui_font,
+              caps=art.meta_transform == "uppercase"))
+        self.lbl_sub.setFont(F(10, family=art.ui_font))
+
+        for label in (self._title_geral, self._title_ap, self._title_sobre):
+            label.setFont(F(18, QFont.Weight.DemiBold, family=art.display_font))
+        for label in (self._eyebrow_geral, self._eyebrow_ap,
+                      self._eyebrow_sobre):
+            label.setFont(F(9, QFont.Weight.Bold, tracking=1.3,
+                            family=art.meta_font or art.ui_font,
+                            caps=art.meta_transform == "uppercase"))
+
+        self.lbl_code_title.setFont(
+            F(18, QFont.Weight.DemiBold, family=art.display_font,
+              caps=art.brand_transform == "uppercase"))
+        for label in (self.lbl_code_eyebrow, self.lbl_code_label,
+                      self.lbl_aside_title, self.lbl_current):
+            label.setFont(F(9, QFont.Weight.Bold, tracking=1.1,
+                            family=art.meta_font or art.ui_font,
+                            caps=art.meta_transform == "uppercase"))
+        self.lbl_code_copy.setFont(F(10, family=art.ui_font))
+        self.lbl_aside_note.setFont(F(10, family=art.ui_font))
+        for item in self.findChildren(QLabel, "AsideItem"):
+            item.setFont(F(10, family=art.ui_font))
+        self.code_input.setFont(F(11, family=art.ui_font))
+        self.pill_current.setFont(F(10, QFont.Weight.DemiBold,
+                                    family=art.ui_font))
+        self.pill_current.setText(theme.label)
+        self.badge.set_theme(theme)
+        self.btn_close.set_theme(theme)
+        self.check_reduzir.set_theme(theme)
+        for botao in self.findChildren(PillButton):
+            botao.set_theme(theme)
+        for divisor in self.findChildren(Divider):
+            divisor.set_theme(theme)
+        for card in self._cards:
+            card.set_theme(theme)
+
+    # ── cartões de tema ─────────────────────────────────────────────────────
+    def _refresh_cards(self) -> None:
+        while self.grid.count():
+            item = self.grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._cards = []
+        # A lista vem do estado que o App mantém (e não do QSettings no disco):
+        # assim o cartão aparece no mesmo instante em que o código é aceito.
+        chaves = [k for k in THEME_ORDER if k in CORE_THEME_KEYS or k in self._unlocked]
+        chaves += [k for k in sorted(self._unlocked) if k not in THEME_ORDER]
+        temas = {k: THEMES[k] for k in chaves}
+        for indice, (key, theme) in enumerate(temas.items()):
+            card = ThemeCard(theme, active=(key == self._theme.key))
+            card.clicked.connect(lambda _=False, k=key: self.theme_selected.emit(k))
+            self.grid.addWidget(card, indice // 2, indice % 2)
+            self._cards.append(card)
+
+    def set_unlocked(self, unlocked: set[str]) -> None:
+        self._unlocked = set(unlocked)
+        self._refresh_cards()
+
+    # ── ações ───────────────────────────────────────────────────────────────
+    def _on_reduced(self, reduzido: bool) -> None:
+        self._reduced = bool(reduzido)
+        self.reduced_changed.emit(self._reduced)
+
+    def _show_feedback(self, state: str, title: str, detail: str) -> None:
+        self.feedback.setObjectName(
+            "FeedbackOk" if state == "success" else "FeedbackErr")
+        self.feedback.setText(f"<b>{title}</b><br>{detail}")
+        self.feedback.style().unpolish(self.feedback)
+        self.feedback.style().polish(self.feedback)
+        self.feedback.setVisible(True)
+        self.feedback.adjustSize()
+        self.feedback.setMinimumHeight(
+            max(52, self.feedback.sizeHint().height()))
+
+    def _activate_code(self) -> None:
+        key = CODE_TO_THEME.get(normalize_code(self.code_input.text()))
+        if not key:
+            self._show_feedback(
+                "error",
+                "Código não reconhecido.",
+                "Confira o nome do tema e tente novamente. Nada foi alterado.",
+            )
+            return
+        theme = EXTRA_THEMES[key]
+        self._show_feedback(
+            "success",
+            f"Tema {theme.label} ativado.",
+            "O tema foi aplicado e será lembrado na próxima abertura.",
+        )
+        self.pill_current.setText(theme.label)
+        self.theme_unlocked.emit(key)
+
+    def _forget(self) -> None:
+        resposta = QMessageBox.question(
+            self, "Esquecer temas desbloqueados",
+            "Remover da memória os temas secretos já desbloqueados?\n\n"
+            "Eles voltam a ficar ocultos e o tema atual retorna ao escuro.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if resposta == QMessageBox.StandardButton.Yes:
+            self.forget_requested.emit()
+
+    # ── janela ──────────────────────────────────────────────────────────────
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        screen = self.screen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        largura = min(self.width(), area.width() - 40)
+        altura = min(self.height(), area.height() - 40)
+        self.resize(max(self.minimumWidth(), largura),
+                    max(self.minimumHeight(), altura))
+        self.move(area.center().x() - self.width() // 2,
+                  area.center().y() - self.height() // 2)
+        self.code_input.setFocus()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Escape:
+            self.reject()
+            return
+        super().keyPressEvent(event)
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  FOLHA DE ESTILO
 # ══════════════════════════════════════════════════════════════════════════════
 def build_qss(t: Theme) -> str:
+    art = t.art
+    ui = art.ui_font
+    badge_font = art.badge_font or ui
+    chip_top = art.chip_from or t.accent
+    chip_bottom = art.chip_to or t.accent
+    badge_bg = art.badge_bg or t.accent_soft
+    badge_fg = art.badge_fg or t.accent_soft_text
+    badge_border = (f"border: 1px solid {art.badge_border};"
+                    if art.badge_border else "border: none;")
     return f"""
 QWidget {{
-    font-family: "Segoe UI";
     color: {t.text};
 }}
 QLabel {{ background: transparent; }}
 QLabel#Meta {{
     color: {t.text_muted};
-    font-size: 9px;
-    font-weight: 600;
 }}
 QLabel#BrandTitle {{
     color: {t.text};
-    font-size: 16px;
-    font-weight: 600;
 }}
 QLabel#BrandSub {{
     color: {t.text_secondary};
+    font-family: "{ui}";
     font-size: 9px;
 }}
 QLabel#Badge {{
-    background: {t.accent_soft};
-    color: {t.accent_soft_text};
+    background: {badge_bg};
+    color: {badge_fg};
+    {badge_border}
     border-radius: 6px;
     padding: 3px 9px;
-    font-size: 9px;
-    font-weight: 600;
 }}
 QLabel#Chip {{
-    background: {t.accent};
-    color: {t.on_accent};
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 {chip_top}, stop:1 {chip_bottom});
+    color: {art.chip_fg or t.on_accent};
     border-radius: 10px;
-    font-size: 9px;
-    font-weight: 700;
 }}
 QLabel#SectionTitle {{
     color: {t.text};
-    font-size: 11px;
-    font-weight: 600;
 }}
 QLineEdit#Field {{
     background: {t.field_bg};
@@ -2514,6 +4033,7 @@ QLineEdit#Field {{
     color: {t.text};
     selection-background-color: {t.accent};
     selection-color: {t.on_accent};
+    font-family: "{ui}";
     font-size: 11px;
 }}
 QLineEdit#Field:hover {{ border-color: {t.border_strong}; }}
@@ -2523,10 +4043,11 @@ QToolTip {{
     color: {t.text};
     border: 1px solid {t.border};
     padding: 5px 8px;
+    font-family: "{ui}";
     font-size: 10px;
 }}
 QMessageBox {{ background: {t.surface_alt}; }}
-QMessageBox QLabel {{ color: {t.text}; font-size: 11px; }}
+QMessageBox QLabel {{ color: {t.text}; font-family: "{ui}"; font-size: 11px; }}
 QMessageBox QPushButton {{
     background: {t.accent};
     color: {t.on_accent};
@@ -2534,6 +4055,7 @@ QMessageBox QPushButton {{
     border-radius: 8px;
     padding: 6px 20px;
     min-width: 64px;
+    font-family: "{ui}";
     font-size: 11px;
     font-weight: 600;
 }}
@@ -2580,6 +4102,7 @@ QTextEdit#Body {{
     color: {t.text};
     selection-background-color: {t.accent};
     selection-color: {t.on_accent};
+    font-family: "{ui}";
     font-size: 11px;
 }}
 QTextEdit#Body:focus {{ border-color: {t.accent}; background: {t.field_focus}; }}
@@ -2590,6 +4113,7 @@ QTableWidget {{
     border-radius: 10px;
     gridline-color: {t.border};
     color: {t.text};
+    font-family: "{ui}";
     font-size: 11px;
 }}
 QTableWidget::item {{ padding: 3px 6px; }}
@@ -2600,6 +4124,7 @@ QHeaderView::section {{
     border: none;
     border-bottom: 1px solid {t.border_strong};
     padding: 6px 8px;
+    font-family: "{ui}";
     font-size: 10px;
     font-weight: 600;
 }}
@@ -2630,6 +4155,109 @@ QScrollBar::handle:horizontal {{
 QScrollBar::handle:horizontal:hover {{ background: {t.accent}; }}
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0px; }}
 QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: transparent; }}
+
+/* ── Configurações ─────────────────────────────────────────────────────── */
+QDialog#SettingsDialog {{ background: transparent; }}
+QFrame#SettingsShell {{
+    background: {t.surface};
+    border: 1px solid {t.border};
+    border-radius: 16px;
+}}
+QLabel#SettingsEyebrow {{
+    color: {t.text_muted};
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1.3px;
+}}
+QLabel#SettingsSub {{
+    color: {t.text_secondary};
+    font-family: "{ui}";
+    font-size: 10px;
+}}
+QPushButton#SettingsClose {{
+    background: {t.surface};
+    border: 1px solid {t.border};
+    border-radius: 8px;
+    color: {t.text_secondary};
+}}
+QPushButton#SettingsClose:hover {{
+    background: {t.surface_alt};
+    border-color: {t.accent};
+    color: {t.text};
+}}
+QPushButton#SettingsTab {{
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    min-height: 30px;
+    padding: 0 14px;
+    color: {t.text_secondary};
+    font-family: "{ui}";
+    font-size: 11px;
+    font-weight: 500;
+}}
+QPushButton#SettingsTab:hover {{
+    background: {t.surface};
+    color: {t.text};
+}}
+QPushButton#SettingsTab:checked {{
+    background: {t.accent_soft};
+    border-color: {t.accent};
+    color: {t.accent_soft_text};
+    font-weight: 600;
+}}
+QFrame#SettingsCard {{
+    background: {t.surface_alt};
+    border: 1px solid {t.border};
+    border-radius: 12px;
+}}
+QFrame#SettingsAside {{
+    background: {t.bg_top};
+    border: 1px solid {t.border};
+    border-radius: 12px;
+}}
+QLabel#FeedbackOk {{
+    background: {t.ok_bg};
+    border: 1px solid {t.ok_fg};
+    border-radius: 9px;
+    color: {t.ok_fg};
+    padding: 9px 11px;
+    font-size: 10px;
+}}
+QLabel#FeedbackErr {{
+    background: {t.err_bg};
+    border: 1px solid {t.err_fg};
+    border-radius: 9px;
+    color: {t.err_fg};
+    padding: 9px 11px;
+    font-size: 10px;
+}}
+QLabel#ThemePill {{
+    background: {t.accent_soft};
+    border: 1px solid {t.accent};
+    border-radius: 7px;
+    color: {t.accent_soft_text};
+    padding: 3px 9px;
+    font-size: 10px;
+    font-weight: 600;
+}}
+QLabel#CodeEyebrow, QLabel#CodeLabel, QLabel#AsideTitle, QLabel#ThemeLabel {{
+    color: {t.text_muted};
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1.1px;
+}}
+QLabel#CodeCopy, QLabel#AsideItem, QLabel#AsideNote {{
+    color: {t.text_secondary};
+    font-size: 10px;
+}}
+QLabel#CurrentLabel {{
+    color: {t.text_muted};
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1.1px;
+}}
+QFrame#CodeDivider {{ background: {t.border}; border: none; }}
 """
 
 
@@ -2657,18 +4285,33 @@ class App(StarField):
         self.setWindowIcon(make_app_icon(DARK))
 
         self._settings = QSettings("PagFlow", "PagFlow")
+        self._unlocked = unlocked_keys(self._settings)
         saved = str(self._settings.value("tema", "dark"))
-        self._theme_key = saved if saved in THEMES else "dark"
+        if saved not in THEMES or (
+            saved in EXTRA_THEMES and saved not in self._unlocked
+        ):
+            saved = "dark"
+        self._theme_key = saved
         self.theme = THEMES[self._theme_key]
         self._busy = False
         self._themed: list = []
         self._overlay: QLabel | None = None
         self._fade_anim: QPropertyAnimation | None = None
+        self._settings_dialog: SettingsDialog | None = None
+        self._scrim: QWidget | None = None
+        # preferência de acessibilidade (o env var continua valendo como piso)
+        self._env_reduced = self._reduced
+        try:
+            pref_reduzir = bool(int(self._settings.value(ANIMATIONS_SETTING, 0) or 0))
+        except (TypeError, ValueError):
+            pref_reduzir = False
+        self._reduced_pref = pref_reduzir
 
         self._build()
         self.status_requested.connect(self._set_status)
         self.thread_finished.connect(self._on_finished)
         self._apply_theme()
+        self.set_reduced(self._reduced_pref or self._env_reduced)
         self._center()
         self.entry_nome.setFocus()      # digitação imediata ao abrir
 
@@ -2740,6 +4383,11 @@ class App(StarField):
         top_layout.addWidget(self.lbl_author, 0, Qt.AlignmentFlag.AlignVCenter)
         top_layout.addStretch(1)
 
+        self.btn_config = IconButton("gear", "Configurações", top, compact=True)
+        self.btn_config.clicked.connect(self._open_settings)
+        top_layout.addWidget(self.btn_config, 0, Qt.AlignmentFlag.AlignVCenter)
+        top_layout.addSpacing(8)
+
         self.toggle = ThemeToggle(top)
         self.toggle.theme_requested.connect(self._set_theme)
         top_layout.addWidget(self.toggle, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -2799,10 +4447,10 @@ class App(StarField):
         root.addWidget(self.status)
 
         # widgets que precisam de repintura/tokens
-        self._themed = [self.header, self.logo, self.toggle, self.switch,
-                        self.seg, self.select, self.btn_pasta, self.btn_destino,
-                        self.divider, self.btn_limpar, self.btn_gerar,
-                        self.status, self.envio]
+        self._themed = [self.header, self.logo, self.toggle, self.btn_config,
+                        self.switch, self.seg, self.select, self.btn_pasta,
+                        self.btn_destino, self.divider, self.btn_limpar,
+                        self.btn_gerar, self.status, self.envio]
 
         # ordem de tabulação: formulário → ações
         self.setTabOrder(self.entry_nome, self.entry_pasta)
@@ -2951,23 +4599,35 @@ class App(StarField):
     def _set_theme(self, key: str) -> None:
         if key not in THEMES or key == self._theme_key:
             return
+        if key in EXTRA_THEMES and key not in self._unlocked:
+            return
         overlay = None
-        if self.isVisible() and not self.isMinimized():
+        if self.isVisible() and not self.isMinimized() and self._scrim is None:
             overlay = self._snapshot()
         self._theme_key = key
         self.theme = THEMES[key]
         self._apply_theme()
         self._settings.setValue("tema", key)
+        self._settings.sync()
         if overlay is not None:
             self._fade_out(overlay)
 
     def _apply_theme(self) -> None:
+        global _UI_FONT
         t = self.theme
+        _UI_FONT = t.art.ui_font or "Segoe UI"
+        # A fonte da aplicação é a base de tudo que não tem fonte própria.
+        # (O QSS não define font-family global: isso sobrescreveria as fontes
+        # de display aplicadas com setFont.)
+        app = QApplication.instance()
+        if app is not None:
+            app.setFont(F(11, family=_UI_FONT))
+        self.setFont(F(11, family=_UI_FONT))
         self.setStyleSheet(build_qss(t))
         self.set_theme(t)                       # StarField
         for widget in self._themed:
             widget.set_theme(t)
-        self.lbl_author.setFont(F(9, QFont.Weight.DemiBold, 1.1))
+        self._apply_typography(t)
         self.setWindowIcon(make_app_icon(t))
 
         for entry in (self.entry_nome, self.entry_pasta, self.entry_destino):
@@ -2978,14 +4638,84 @@ class App(StarField):
         self._sync_primary_shadow(t)
         self.header.set_shadow(t.shadow_alpha)
 
+        if self._settings_dialog is not None:
+            self._settings_dialog.set_theme(t)
+            self._settings_dialog._refresh_cards()
+
+    def _apply_typography(self, t: Theme) -> None:
+        """Fontes/tracking/caixa alta que o QSS não consegue expressar."""
+        art = t.art
+        self.lbl_author.setFont(F(
+            9, QFont.Weight.Bold,
+            tracking=tracking_px(art.meta_tracking, 9) or 1.1,
+            family=art.meta_font or art.ui_font,
+            caps=art.meta_transform == "uppercase",
+        ))
+
+        self.lbl_title.setTextFormat(Qt.TextFormat.RichText)
+        self.lbl_title.setText(self._brand_html(t))
+        self.lbl_title.setFont(F(
+            art.brand_size, QFont.Weight.DemiBold,
+            tracking=tracking_px(art.brand_tracking, art.brand_size),
+            family=art.display_font,
+            caps=art.brand_transform == "uppercase",
+        ))
+        # display fonts altas (Anton, Playfair) encostam na borda do cartão:
+        # o respiro sai da faixa do subtítulo, que tem folga de sobra.
+        dy = art.brand_dy
+        self.lbl_title.setContentsMargins(0, dy, 0, 0)
+        if dy:
+            self.lbl_title.setFixedHeight(26 + dy)
+            self.lbl_sub.setFixedHeight(25 - dy)
+        else:
+            self.lbl_title.setMinimumHeight(0)
+            self.lbl_title.setMaximumHeight(16_777_215)
+            self.lbl_sub.setMinimumHeight(0)
+            self.lbl_sub.setMaximumHeight(16_777_215)
+        self.lbl_title.updateGeometry()
+
+        self.lbl_badge.setFont(F(
+            9, QFont.Weight.Bold,
+            tracking=tracking_px(art.badge_tracking, 9) or 0.36,
+            family=art.badge_font or art.ui_font,
+            caps=art.badge_transform == "uppercase",
+        ))
+
+        for label in self.findChildren(QLabel, "SectionTitle"):
+            label.setFont(F(
+                art.section_size, QFont.Weight.DemiBold,
+                tracking=tracking_px(art.section_tracking, art.section_size),
+                family=art.section_font or art.ui_font,
+                caps=art.section_transform == "uppercase",
+            ))
+        for chip in self.findChildren(QLabel, "Chip"):
+            chip.setFont(F(9, QFont.Weight.Bold, family=art.ui_font))
+
+    def _brand_html(self, t: Theme) -> str:
+        art = t.art
+        rotulo = art.brand_label or "PagFlow"
+        if not art.brand_suffix:
+            return rotulo
+        cor = art.brand_suffix_color or t.accent
+        italico = " font-style:italic;" if art.brand_suffix_style == "italic" else ""
+        return (f'{rotulo} <span style="color:{cor};{italico}">'
+                f'{art.brand_suffix}</span>')
+
     def _sync_primary_shadow(self, t: Theme) -> None:
-        glow = QColor(t.accent)
+        # o brilho acompanha o gradiente do botão (no Açaí é dourado, não roxo)
+        glow = QColor(t.primary_from)
         if t.key == "dark":
             glow.setAlpha(95)
             blur, offset = 26, 0
-        else:
+        elif t.key == "light":
             glow.setAlpha(70)
             blur, offset = 20, 4
+        elif t.art.is_light:
+            glow.setAlpha(64)
+            blur, offset = 20, 4
+        else:
+            glow.setAlpha(82)
+            blur, offset = 24, 0
         shadow = QGraphicsDropShadowEffect(self.btn_gerar)
         shadow.setBlurRadius(blur)
         shadow.setOffset(0, offset)
@@ -3036,6 +4766,73 @@ class App(StarField):
     def _on_fade_done(self) -> None:
         self._overlay = None
         self._fade_anim = None
+
+    # ── configurações ───────────────────────────────────────────────────────
+    def _open_settings(self) -> None:
+        if self._settings_dialog is not None:
+            self._settings_dialog.raise_()
+            self._settings_dialog.activateWindow()
+            return
+
+        self._show_scrim()
+        dialog = SettingsDialog(
+            self.theme, self._settings, self._unlocked,
+            reduced=self._reduced_pref, parent=self,
+        )
+        dialog.theme_selected.connect(self._set_theme)
+        dialog.theme_unlocked.connect(self._on_theme_unlocked)
+        dialog.reduced_changed.connect(self._on_reduced_changed)
+        dialog.forget_requested.connect(self._forget_unlocked)
+        self._settings_dialog = dialog
+        dialog.exec()
+        self._settings_dialog = None
+        self._hide_scrim()
+
+    def _show_scrim(self) -> None:
+        if self._scrim is not None:
+            return
+        scrim = QWidget(self)
+        scrim.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        scrim.setStyleSheet("background: rgba(0, 0, 0, 96);")
+        scrim.setGeometry(self.rect())
+        scrim.show()
+        scrim.raise_()
+        self._scrim = scrim
+
+    def _hide_scrim(self) -> None:
+        if self._scrim is not None:
+            self._scrim.deleteLater()
+            self._scrim = None
+
+    def _on_theme_unlocked(self, key: str) -> None:
+        if key not in EXTRA_THEMES:
+            return
+        self._unlocked.add(key)
+        save_unlocked(self._settings, self._unlocked)
+        self._settings.sync()
+        if self._settings_dialog is not None:
+            self._settings_dialog.set_unlocked(self._unlocked)
+        self._set_theme(key)
+
+    def _forget_unlocked(self) -> None:
+        self._settings.remove(UNLOCKED_SETTING)
+        self._settings.sync()
+        self._unlocked = set()
+        if self._theme_key in EXTRA_THEMES:
+            self._set_theme("dark")
+        if self._settings_dialog is not None:
+            self._settings_dialog.set_unlocked(self._unlocked)
+
+    def _on_reduced_changed(self, reduzido: bool) -> None:
+        self._reduced_pref = bool(reduzido)
+        self._settings.setValue(ANIMATIONS_SETTING, 1 if reduzido else 0)
+        self._settings.sync()
+        self.set_reduced(self._reduced_pref or self._env_reduced)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self._scrim is not None:
+            self._scrim.setGeometry(self.rect())
 
     # ── callbacks operacionais (mesmo comportamento de antes) ──────────────
     def _browse_pasta(self) -> None:
@@ -3149,6 +4946,7 @@ class App(StarField):
 # ══════════════════════════════════════════════════════════════════════════════
 def main() -> int:
     app = QApplication.instance() or QApplication([])
+    load_theme_fonts()
     app.setStyle("Fusion")
     app.setApplicationName("PagFlow")
     app.setApplicationDisplayName("PagFlow Excel")
